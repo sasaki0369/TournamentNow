@@ -169,11 +169,175 @@ function toArray(val){
   return Object.keys(val).sort(function(a,b){return Number(a)-Number(b);}).map(function(k){return val[k];});
 }
 
-/* ══ 自動配信ロジック（コアロジック：テスト容易にするため純関数化） ══
-   data: {courtCount, queue:[...], courts:{ "1":{status,...}, ... }}
-   戻り値: 変更後の data（変更が無ければ同一参照を返す） */
-function computeDispatch(data){
-  if(!data)return data;
+/* ══ ラウンドロビン組み合わせパターン ══
+   n=3,4,5 は実データの巡回表と一致確認済み。6人以上は一般的な循環法アルゴリズムで
+   生成（数学的に正しい総当たりにはなるが、実際の大会要項の番号順とは異なる場合がある） */
+function circleMethodPairs(n){
+  var arr = []; for(var i=0;i<n;i++) arr.push(i);
+  if(n % 2 === 1) arr.push(-1); // 奇数は不戦(bye)を1枠追加
+  var m = arr.length;
+  var a = arr.slice();
+  var flat = [];
+  for(var r=0;r<m-1;r++){
+    for(var i=0;i<m/2;i++){
+      var x=a[i], y=a[m-1-i];
+      if(x!==-1 && y!==-1) flat.push([x,y]);
+    }
+    var last = a.pop(); a.splice(1,0,last);
+  }
+  return flat;
+}
+function roundRobinPairs(n){
+  if(n===2) return [[0,1]];
+  if(n===3) return [[0,1],[0,2],[1,2]];
+  if(n===4) return [[0,1],[2,3],[0,2],[1,3],[0,3],[1,2]];
+  if(n===5) return [[0,1],[3,4],[0,2],[1,3],[2,4],[0,3],[1,4],[2,3],[0,4],[1,2]];
+  return circleMethodPairs(n);
+}
+
+/* ══ リーグ（総当たり）の順位計算 ══
+   タイブレーク: 勝敗数 → 取得ゲーム率 → 取得ポイント率。
+   これらが全て同率の場合は本部の手動確定(tieOverride)に委ねる。 */
+function computeStandings(league){
+  var n = (league.participants||[]).length;
+  var stats = (league.participants||[]).map(function(_, idx){
+    return { idx:idx, wins:0, losses:0, gamesWon:0, gamesLost:0, pointsWon:0, pointsLost:0 };
+  });
+  var matches = toArray(league.matches);
+  matches.forEach(function(m){
+    if(!m.result) return;
+    var a = stats[m.i], b = stats[m.j];
+    a.gamesWon += m.result.gameWinsA||0; a.gamesLost += m.result.gameWinsB||0;
+    b.gamesWon += m.result.gameWinsB||0; b.gamesLost += m.result.gameWinsA||0;
+    a.pointsWon += m.result.pointsA||0; a.pointsLost += m.result.pointsB||0;
+    b.pointsWon += m.result.pointsB||0; b.pointsLost += m.result.pointsA||0;
+    if(m.result.winner==='A'){ a.wins++; b.losses++; } else { b.wins++; a.losses++; }
+  });
+  stats.forEach(function(s){
+    s.gameRate = (s.gamesWon+s.gamesLost)>0 ? s.gamesWon/(s.gamesWon+s.gamesLost) : 0;
+    s.pointRate = (s.pointsWon+s.pointsLost)>0 ? s.pointsWon/(s.pointsWon+s.pointsLost) : 0;
+  });
+  var allDone = matches.length>0 && matches.every(function(m){ return !!m.result; });
+  if(!allDone) return { complete:false, stats:stats };
+
+  if(league.tieOverride && league.tieOverride.length===n){
+    var order = league.tieOverride;
+    return { complete:true, ranking: order.map(function(idx,i){ return Object.assign({},stats[idx],{rank:i+1}); }) };
+  }
+
+  var sorted = stats.slice().sort(function(x,y){
+    if(y.wins!==x.wins) return y.wins-x.wins;
+    if(y.gameRate!==x.gameRate) return y.gameRate-x.gameRate;
+    if(y.pointRate!==x.pointRate) return y.pointRate-x.pointRate;
+    return 0;
+  });
+  var groups = {};
+  sorted.forEach(function(s){
+    var key = s.wins+'_'+s.gameRate.toFixed(4)+'_'+s.pointRate.toFixed(4);
+    groups[key] = groups[key]||[]; groups[key].push(s);
+  });
+  var hasTie = Object.keys(groups).some(function(k){ return groups[k].length>1; });
+  if(hasTie) return { complete:true, needsManualTiebreak:true, stats:sorted };
+  return { complete:true, ranking: sorted.map(function(s,i){ return Object.assign({},s,{rank:i+1}); }) };
+}
+
+/* ══ ブラケットのスロット参照解決 ══
+   ref: {type:'fixed', names} | {type:'leagueRank', leagueId, rank} | {type:'matchWinner', bracketId, matchId} */
+function resolveSlotRef(data, ref){
+  if(!ref) return null;
+  if(ref.type==='fixed') return ref.names;
+  if(ref.type==='leagueRank'){
+    var lg = (data.leagues||{})[ref.leagueId];
+    if(!lg) return null;
+    var st = computeStandings(lg);
+    if(!st.complete || st.needsManualTiebreak || !st.ranking) return null;
+    var entry = st.ranking.filter(function(r){ return r.rank===ref.rank; })[0];
+    if(!entry) return null;
+    return lg.participants[entry.idx];
+  }
+  if(ref.type==='matchWinner'){
+    var br = (data.brackets||{})[ref.bracketId];
+    if(!br) return null;
+    var m = toArray(br.matches).filter(function(x){ return x.id===ref.matchId; })[0];
+    if(!m || !m.result) return null;
+    return m.result.winner==='A' ? m.teamA : m.teamB;
+  }
+  return null;
+}
+
+/* ══ ①バドるから届いた結果をリーグ／ブラケットへ反映 ══ */
+function applyPendingResults(data){
+  var courts = data.courts || {};
+  var leagues = Object.assign({}, data.leagues||{});
+  var brackets = Object.assign({}, data.brackets||{});
+  var newCourts = Object.assign({}, courts);
+  var changed = false;
+
+  Object.keys(courts).forEach(function(key){
+    var c = courts[key];
+    if(!c || !c.lastResult || c.lastResult.applied) return;
+    var r = c.lastResult;
+    if(r.refType==='league' && leagues[r.refId]){
+      var lg = Object.assign({}, leagues[r.refId]);
+      var matches = toArray(lg.matches).map(function(m,idx){
+        if(idx !== r.refMatchIndex) return m;
+        return Object.assign({}, m, { result:{ winner:r.winner, gameWinsA:r.gameWinsA, gameWinsB:r.gameWinsB, pointsA:r.pointsA, pointsB:r.pointsB } });
+      });
+      lg.matches = matches;
+      leagues[r.refId] = lg;
+      changed = true;
+    }
+    if(r.refType==='bracket' && brackets[r.refId]){
+      var br = Object.assign({}, brackets[r.refId]);
+      br.matches = toArray(br.matches).map(function(m){
+        if(m.id !== r.refMatchIndex) return m;
+        return Object.assign({}, m, { result:{ winner:r.winner, gameWinsA:r.gameWinsA, gameWinsB:r.gameWinsB, pointsA:r.pointsA, pointsB:r.pointsB } });
+      });
+      brackets[r.refId] = br;
+      changed = true;
+    }
+    if(r.refType==='league' || r.refType==='bracket'){
+      newCourts[key] = Object.assign({}, c, { lastResult: Object.assign({}, r, { applied:true }) });
+    }
+  });
+
+  if(!changed) return data;
+  return Object.assign({}, data, { leagues:leagues, brackets:brackets, courts:newCourts });
+}
+
+/* ══ ②ブラケットのスロットが揃った試合をキューへ投入 ══ */
+function resolveBracketsIntoQueue(data){
+  var brackets = data.brackets || {};
+  var queue = toArray(data.queue).slice();
+  var changed = false;
+  var newBrackets = {};
+  Object.keys(brackets).forEach(function(bid){
+    var br = brackets[bid];
+    var matches = toArray(br.matches).map(function(m){
+      if(m.teamA && m.teamB) return m;
+      var a = resolveSlotRef(data, m.slotA);
+      var b = resolveSlotRef(data, m.slotB);
+      if(a && b){
+        if(!m.queued){
+          changed = true;
+          queue.push({
+            id: uid(), time:'', matchCode: br.name+'-'+m.id,
+            matchType: (a.filter(Boolean).length>1 || b.filter(Boolean).length>1) ? 'doubles':'singles',
+            teamA:a, teamB:b, refType:'bracket', refId:bid, refMatchIndex:m.id
+          });
+        }
+        return Object.assign({}, m, { teamA:a, teamB:b, queued:true });
+      }
+      return m;
+    });
+    newBrackets[bid] = Object.assign({}, br, { matches:matches });
+  });
+  if(!changed) return data;
+  return Object.assign({}, data, { brackets:newBrackets, queue:queue });
+}
+
+/* ══ ③空きコートへキュー先頭を割当（従来ロジック） ══ */
+function assignIdleCourts(data){
   var courtCount=data.courtCount||0;
   var queue=toArray(data.queue).slice();
   var courts=Object.assign({},data.courts||{});
@@ -189,6 +353,17 @@ function computeDispatch(data){
   }
   if(!changed)return data;
   return Object.assign({},data,{queue:queue,courts:courts});
+}
+
+/* ══ 自動配信ロジック本体（3段パイプライン。テスト容易にするため純関数化） ══
+   data: {courtCount, queue, courts, leagues, brackets}
+   戻り値: 変更後の data（変更が無ければ同一参照を返す） */
+function computeDispatch(data){
+  if(!data)return data;
+  var d1 = applyPendingResults(data);
+  var d2 = resolveBracketsIntoQueue(d1);
+  var d3 = assignIdleCourts(d2);
+  return d3;
 }
 
 /* ══ 管理者クライアントでのディスパッチ監視 ══
@@ -207,6 +382,7 @@ function watchAndDispatch(eventId){
     }
   });
 }
+
 
 /* ══ localStorage: 作成した大会の一覧（管理者が後で戻れるように） ══ */
 var EVT_LIST_KEY='taikainow_events';
@@ -336,6 +512,278 @@ function buildCourtCard(courtNo,court){
 }
 
 /* ══ 進行画面（管理者／閲覧者共通） ══ */
+/* ══ CSS: リーグ表・ブラケット表示 ══ */
+var extraStyle = document.createElement('style');
+extraStyle.textContent = [
+  '.tabs{display:flex;border-bottom:1px solid var(--rule);background:#fff}',
+  '.tab-btn{flex:1;padding:11px 0;font-size:13px;color:var(--ink3);background:none;border:none;border-bottom:2px solid transparent}',
+  '.tab-btn.active{color:var(--ink);border-bottom-color:var(--ink);font-weight:700}',
+  '.league-card{background:#fff;border:1px solid var(--rule);border-radius:8px;margin:10px 18px;padding:12px 14px}',
+  '.league-card h3{font-size:13px;margin-bottom:8px}',
+  'table.standing{width:100%;border-collapse:collapse;font-size:12px}',
+  'table.standing th,table.standing td{border:1px solid var(--rule);padding:5px 6px;text-align:center}',
+  'table.standing td.name-cell{text-align:left}',
+  'table.standing td.mark-o{color:#2a7d2a;font-weight:700}',
+  'table.standing td.mark-x{color:var(--accent)}',
+  '.tie-warn{background:#fff3e0;color:#a15c00;font-size:12px;padding:8px 10px;border-radius:4px;margin-top:8px}',
+  '.bracket-round{margin-bottom:10px}',
+  '.bracket-round-label{font-size:11px;color:var(--ink3);margin-bottom:4px;letter-spacing:.06em}',
+  '.bracket-match{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--rule);border-radius:6px;margin-bottom:6px;font-size:13px;background:#fff}',
+  '.bracket-match .pending{color:var(--ink3);font-style:italic}',
+  '.bracket-match .winner{font-weight:700}',
+  '.bracket-match .score{font-family:var(--mono);font-size:12px;color:var(--ink3);margin-left:auto}',
+  '.create-form{background:#fcfcfa;border:1px solid var(--rule);border-radius:8px;margin:10px 18px;padding:12px 14px}',
+  '.create-form .field-label{margin-top:8px}',
+  '.match-row-editor{display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap}',
+  '.match-row-editor select,.match-row-editor input{font-size:12px;padding:5px 6px}'
+].join('\n');
+document.head.appendChild(extraStyle);
+
+var activeTab = 'courts'; // 'courts' | 'tournament'
+
+function participantMatchResult(league, i, j){
+  var m = toArray(league.matches).filter(function(x){
+    return (x.i===i && x.j===j) || (x.i===j && x.j===i);
+  })[0];
+  return m;
+}
+
+function buildLeagueCard(eventId, league, isAdmin, refreshFn){
+  var card = el('div',{className:'league-card'});
+  card.appendChild(el('h3',{},league.name));
+  var n = league.participants.length;
+
+  var table = el('table',{className:'standing'});
+  var head = el('tr'); head.appendChild(el('th',{},''));
+  league.participants.forEach(function(p){ head.appendChild(el('th',{},teamLabel(p))); });
+  head.appendChild(el('th',{},'勝敗')); head.appendChild(el('th',{},'順位'));
+  table.appendChild(head);
+
+  var st = computeStandings(league);
+  var rankByIdx = {};
+  if(st.ranking) st.ranking.forEach(function(r){ rankByIdx[r.idx]=r.rank; });
+  var statByIdx = {};
+  (st.stats||st.ranking||[]).forEach(function(s){ statByIdx[s.idx]=s; });
+
+  for(var i=0;i<n;i++){
+    var tr = el('tr');
+    tr.appendChild(el('td',{className:'name-cell'},teamLabel(league.participants[i])));
+    for(var j=0;j<n;j++){
+      if(i===j){ tr.appendChild(el('td',{},'')); continue; }
+      var m = participantMatchResult(league, i, j);
+      if(!m || !m.result){ tr.appendChild(el('td',{},'')); continue; }
+      var iWon = (m.i===i && m.result.winner==='A') || (m.j===i && m.result.winner==='B');
+      tr.appendChild(el('td',{className: iWon?'mark-o':'mark-x'}, iWon?'○':'×'));
+    }
+    var s = statByIdx[i];
+    tr.appendChild(el('td',{}, s ? (s.wins+'-'+s.losses) : ''));
+    tr.appendChild(el('td',{}, rankByIdx[i] || (st.needsManualTiebreak?'同率':'')));
+    table.appendChild(tr);
+  }
+  card.appendChild(table);
+
+  if(st.needsManualTiebreak && isAdmin){
+    var warn = el('div',{className:'tie-warn'},'同率のため順位を手動で確定してください（勝敗・ゲーム率・ポイント率すべて同じ相手がいます）。下の欄に順位順で番号をカンマ区切りで入力してください（例: 2,0,1）。');
+    var ord = el('input',{className:'field-inp',placeholder:'例: 2,0,1',style:{marginTop:'8px'}});
+    var okBtn = el('button',{className:'btn btn-outline',style:{marginTop:'8px'}},'この順位で確定');
+    okBtn.onclick=function(){
+      var arr = ord.value.split(',').map(function(s){return parseInt(s.trim(),10);});
+      if(arr.length!==n || arr.some(function(x){return isNaN(x)||x<0||x>=n;})){ alert('人数分の番号（0〜'+(n-1)+'）をカンマ区切りで入力してください'); return; }
+      dbRef(eventId).child('leagues/'+league.id+'/tieOverride').set(arr).then(refreshFn);
+    };
+    warn.appendChild(el('div',{},[ord, okBtn]));
+    card.appendChild(warn);
+  }else if(st.needsManualTiebreak){
+    card.appendChild(el('div',{className:'tie-warn'},'同率のため本部による順位確定待ちです。'));
+  }
+  return card;
+}
+
+function bracketSlotLabel(data, ref){
+  if(!ref) return '(未設定)';
+  if(ref.type==='fixed') return teamLabel(ref.names);
+  if(ref.type==='leagueRank'){
+    var lg = (data.leagues||{})[ref.leagueId];
+    return (lg?lg.name:'?')+' '+ref.rank+'位';
+  }
+  if(ref.type==='matchWinner'){
+    var br = (data.brackets||{})[ref.bracketId];
+    return (br?br.name:'?')+' 第'+(ref.matchId+1)+'試合 勝者';
+  }
+  return '?';
+}
+
+function buildBracketCard(data, bracket){
+  var card = el('div',{className:'league-card'});
+  card.appendChild(el('h3',{},bracket.name));
+  var rounds = {};
+  toArray(bracket.matches).forEach(function(m){
+    var r = m.round||1;
+    rounds[r] = rounds[r]||[];
+    rounds[r].push(m);
+  });
+  Object.keys(rounds).sort(function(a,b){return a-b;}).forEach(function(r){
+    var roundWrap = el('div',{className:'bracket-round'});
+    roundWrap.appendChild(el('div',{className:'bracket-round-label'},'ROUND '+r));
+    rounds[r].forEach(function(m){
+      var aLabel = m.teamA ? teamLabel(m.teamA) : bracketSlotLabel(data, m.slotA);
+      var bLabel = m.teamB ? teamLabel(m.teamB) : bracketSlotLabel(data, m.slotB);
+      var row = el('div',{className:'bracket-match'});
+      var aEl = el('span',{className: (!m.teamA?'pending':(m.result && m.result.winner==='A'?'winner':''))}, aLabel);
+      var bEl = el('span',{className: (!m.teamB?'pending':(m.result && m.result.winner==='B'?'winner':''))}, bLabel);
+      row.appendChild(aEl); row.appendChild(el('span',{},'vs')); row.appendChild(bEl);
+      if(m.result){
+        row.appendChild(el('span',{className:'score'}, m.result.gameWinsA+'-'+m.result.gameWinsB));
+      }
+      roundWrap.appendChild(row);
+    });
+    card.appendChild(roundWrap);
+  });
+  return card;
+}
+
+function buildCreateLeagueForm(eventId, data, refreshFn){
+  var form = el('div',{className:'create-form'});
+  form.appendChild(el('div',{className:'section-title'},'リーグ（総当たり）を作成'));
+  var nameInp = el('input',{className:'field-inp',placeholder:'リーグ名（例: AIIランクAブロック）'});
+  var typeSel = el('select',{className:'field-sel'});
+  [['singles','シングルス'],['doubles','ダブルス']].forEach(function(p){ var o=document.createElement('option'); o.value=p[0]; o.textContent=p[1]; typeSel.appendChild(o); });
+  var namesTa = el('textarea',{className:'field-ta',placeholder:'参加者名（1行1チーム。ダブルスは「名前1・名前2」）'});
+  var err = el('div',{className:'err'});
+  var btn = el('button',{className:'btn btn-primary',style:{marginTop:'8px'}},'リーグを作成してキューに追加');
+  btn.onclick=function(){
+    var names = namesTa.value.split('\n').map(function(s){return s.trim();}).filter(Boolean).map(function(line){
+      return typeSel.value==='doubles' ? line.split(/[・,、]/).map(function(s){return s.trim();}) : [line];
+    });
+    var pairs = roundRobinPairs(names.length);
+    if(!nameInp.value.trim()){ err.textContent='リーグ名を入力してください'; return; }
+    if(names.length<2){ err.textContent='参加者は2以上必要です'; return; }
+    var leagueId = uid();
+    var matches = pairs.map(function(p,idx){ return {id:idx, i:p[0], j:p[1], result:null}; });
+    var league = { id:leagueId, name:nameInp.value.trim(), type:typeSel.value, participants:names, matches:matches };
+    var queueItems = matches.map(function(m,idx){
+      return { id:uid(), time:'', matchCode:league.name+'-'+(idx+1), matchType:typeSel.value,
+        teamA:names[m.i], teamB:names[m.j], refType:'league', refId:leagueId, refMatchIndex:idx };
+    });
+    var curQueue = toArray(data.queue);
+    dbRef(eventId).child('leagues/'+leagueId).set(league)
+      .then(function(){ return dbRef(eventId).child('queue').set(curQueue.concat(queueItems)); })
+      .then(function(){ err.className='ok-msg'; err.textContent=matches.length+'試合をキューに追加しました。'; refreshFn(); })
+      .catch(function(e){ err.className='err'; err.textContent='失敗: '+e.message; });
+  };
+  form.appendChild(nameInp); form.appendChild(typeSel); form.appendChild(namesTa); form.appendChild(btn); form.appendChild(err);
+  return form;
+}
+
+function buildCreateBracketForm(eventId, data, refreshFn){
+  var form = el('div',{className:'create-form'});
+  form.appendChild(el('div',{className:'section-title'},'決勝トーナメント（勝ち上がり）を作成'));
+  var nameInp = el('input',{className:'field-inp',placeholder:'ブラケット名（例: AIIランク決勝T）'});
+  form.appendChild(nameInp);
+
+  var matchRows = []; // {round, slotAType, ...}
+  var rowsWrap = el('div',{style:{marginTop:'10px'}});
+  form.appendChild(rowsWrap);
+
+  var leagueIds = Object.keys(data.leagues||{});
+  var existingBracketIds = Object.keys(data.brackets||{});
+
+  function buildSlotEditor(labelText){
+    var wrap = el('div',{className:'match-row-editor'});
+    wrap.appendChild(el('span',{style:{fontSize:12,color:'var(--ink3)',minWidth:'20px'}},labelText));
+    var typeSel = el('select');
+    [['fixed','固定名'],['leagueRank','リーグの順位'],['matchWinner','他の試合の勝者']].forEach(function(p){ var o=document.createElement('option'); o.value=p[0]; o.textContent=p[1]; typeSel.appendChild(o); });
+    wrap.appendChild(typeSel);
+
+    var fixedInp = el('input',{placeholder:'選手/チーム名'});
+    var leagueSel = el('select');
+    leagueIds.forEach(function(lid){ var o=document.createElement('option'); o.value=lid; o.textContent=data.leagues[lid].name; leagueSel.appendChild(o); });
+    var rankInp = el('input',{type:'number',placeholder:'順位',style:{width:'56px'},value:'1'});
+    var matchBracketSel = el('select');
+    existingBracketIds.forEach(function(bid){ var o=document.createElement('option'); o.value=bid; o.textContent=data.brackets[bid].name; matchBracketSel.appendChild(o); });
+    var matchIdInp = el('input',{type:'number',placeholder:'試合番号(0始まり)',style:{width:'70px'},value:'0'});
+
+    function refresh(){
+      fixedInp.style.display = typeSel.value==='fixed' ? 'inline-block':'none';
+      leagueSel.style.display = typeSel.value==='leagueRank' ? 'inline-block':'none';
+      rankInp.style.display = typeSel.value==='leagueRank' ? 'inline-block':'none';
+      matchBracketSel.style.display = typeSel.value==='matchWinner' ? 'inline-block':'none';
+      matchIdInp.style.display = typeSel.value==='matchWinner' ? 'inline-block':'none';
+    }
+    typeSel.onchange = refresh; refresh();
+    wrap.appendChild(fixedInp); wrap.appendChild(leagueSel); wrap.appendChild(rankInp);
+    wrap.appendChild(matchBracketSel); wrap.appendChild(matchIdInp);
+
+    wrap.getRef = function(){
+      if(typeSel.value==='fixed') return { type:'fixed', names: fixedInp.value.split(/[・,、]/).map(function(s){return s.trim();}).filter(Boolean) };
+      if(typeSel.value==='leagueRank') return { type:'leagueRank', leagueId: leagueSel.value, rank: parseInt(rankInp.value,10)||1 };
+      if(typeSel.value==='matchWinner') return { type:'matchWinner', bracketId: matchBracketSel.value, matchId: parseInt(matchIdInp.value,10)||0 };
+    };
+    return wrap;
+  }
+
+  function addMatchRow(){
+    var box = el('div',{style:{border:'1px dashed var(--rule)',borderRadius:'6px',padding:'8px',marginBottom:'8px'}});
+    var roundInp = el('input',{type:'number',placeholder:'ラウンド',value:String(Math.floor(matchRows.length/2)+1),style:{width:'70px',marginBottom:'6px'}});
+    box.appendChild(el('div',{className:'field-label'},'ラウンド番号'));
+    box.appendChild(roundInp);
+    var slotA = buildSlotEditor('A:');
+    var slotB = buildSlotEditor('B:');
+    box.appendChild(slotA); box.appendChild(slotB);
+    matchRows.push({ box:box, roundInp:roundInp, slotA:slotA, slotB:slotB });
+    rowsWrap.appendChild(box);
+  }
+  addMatchRow();
+
+  var addRowBtn = el('button',{className:'btn btn-gray',style:{marginTop:'4px'}},'＋ 試合を追加');
+  addRowBtn.onclick=function(){ addMatchRow(); };
+  form.appendChild(addRowBtn);
+
+  var err = el('div',{className:'err'});
+  var saveBtn = el('button',{className:'btn btn-primary',style:{marginTop:'10px'}},'このブラケットを作成');
+  saveBtn.onclick=function(){
+    if(!nameInp.value.trim()){ err.textContent='ブラケット名を入力してください'; return; }
+    var matches = matchRows.map(function(r, idx){
+      return { id: idx, round: parseInt(r.roundInp.value,10)||1, slotA: r.slotA.getRef(), slotB: r.slotB.getRef(), teamA:null, teamB:null, queued:false, result:null };
+    });
+    var bracketId = uid();
+    dbRef(eventId).child('brackets/'+bracketId).set({ id:bracketId, name:nameInp.value.trim(), matches:matches })
+      .then(function(){ err.className='ok-msg'; err.textContent='ブラケットを作成しました。対戦相手が揃った試合は自動でキューに入ります。'; refreshFn(); })
+      .catch(function(e){ err.className='err'; err.textContent='失敗: '+e.message; });
+  };
+  form.appendChild(saveBtn); form.appendChild(err);
+  return form;
+}
+
+function buildTournamentView(eventId, data, isAdmin){
+  var wrap = el('div');
+  var leagues = data.leagues || {};
+  var brackets = data.brackets || {};
+  function refresh(){ /* Firebaseの.on('value')経由で自動的に再描画されるため何もしなくてよい */ }
+
+  wrap.appendChild(el('div',{className:'section-label'},'リーグ表'));
+  if(Object.keys(leagues).length===0){
+    wrap.appendChild(el('div',{style:{padding:'10px 18px',color:'var(--ink3)',fontSize:13}},'まだリーグがありません。'));
+  }
+  Object.keys(leagues).forEach(function(lid){
+    wrap.appendChild(buildLeagueCard(eventId, leagues[lid], isAdmin, refresh));
+  });
+
+  wrap.appendChild(el('div',{className:'section-label'},'決勝トーナメント'));
+  if(Object.keys(brackets).length===0){
+    wrap.appendChild(el('div',{style:{padding:'10px 18px',color:'var(--ink3)',fontSize:13}},'まだブラケットがありません。'));
+  }
+  Object.keys(brackets).forEach(function(bid){
+    wrap.appendChild(buildBracketCard(data, brackets[bid]));
+  });
+
+  if(isAdmin){
+    wrap.appendChild(buildCreateLeagueForm(eventId, data, refresh));
+    wrap.appendChild(buildCreateBracketForm(eventId, data, refresh));
+  }
+  return wrap;
+}
+
 function mountProgress(eventId,data,role){
   var isAdmin=role==='admin';
   var root=el('div',{style:{minHeight:'100vh'}});
@@ -344,6 +792,14 @@ function mountProgress(eventId,data,role){
     isAdmin?null:el('span',{className:'viewer-chip'},'閲覧')
   ]);
   root.appendChild(appbar);
+
+  var tabs = el('div',{className:'tabs'});
+  var tabCourts = el('button',{className:'tab-btn'+(activeTab==='courts'?' active':'')},'コート状況');
+  var tabTournament = el('button',{className:'tab-btn'+(activeTab==='tournament'?' active':'')},'リーグ・トーナメント');
+  tabCourts.onclick=function(){ activeTab='courts'; mountProgress(eventId,data,role); };
+  tabTournament.onclick=function(){ activeTab='tournament'; mountProgress(eventId,data,role); };
+  tabs.appendChild(tabCourts); tabs.appendChild(tabTournament);
+  root.appendChild(tabs);
 
   if(isAdmin){
     var ctrlRow=el('div',{style:{display:'flex',gap:8,padding:'12px 18px',borderBottom:'1px solid var(--rule)'}});
@@ -356,6 +812,12 @@ function mountProgress(eventId,data,role){
     };
     ctrlRow.appendChild(shareBtn);
     root.appendChild(ctrlRow);
+  }
+
+  if(activeTab==='tournament'){
+    root.appendChild(buildTournamentView(eventId, data, isAdmin));
+    render(root);
+    return;
   }
 
   root.appendChild(el('div',{className:'section-label'},'コート状況'));
