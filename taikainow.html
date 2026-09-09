@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+<title>大会Now</title>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="大会Now"/>
+<meta name="theme-color" content="#111111"/>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js" crossorigin="anonymous"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js" crossorigin="anonymous"></script>
+<style>
+:root{
+  --ink:#111;--ink2:#555;--ink3:#aaa;--rule:#e4e4e4;--bg:#fafaf8;
+  --accent:#d63800;--mono:'DM Mono',monospace;
+  --sans:'Noto Sans JP',-apple-system,BlinkMacSystemFont,'Hiragino Kaku Gothic ProN',sans-serif;
+  --live:#2e5;--wait:#c80;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:var(--sans);background:var(--bg);min-height:100vh;color:var(--ink)}
+button,input,textarea,select{font-family:var(--sans)}
+button{cursor:pointer}
+button:active{opacity:.75}
+input:focus,textarea:focus{outline:none}
+#app{min-height:100vh;display:flex;flex-direction:column}
+
+.appbar{background:var(--ink);color:white;padding:13px 18px;font-size:15px;font-weight:300;letter-spacing:.05em;flex-shrink:0;position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between}
+.appbar-title{font-size:15px;font-weight:400;color:rgba(255,255,255,.7);letter-spacing:.04em}
+.appbar-right{font-family:var(--mono);font-size:15px;color:rgba(255,255,255,.45);letter-spacing:.04em}
+
+.content{flex:1;overflow-y:auto}
+
+.section-title{font-size:14px;font-weight:700;color:var(--ink);margin-bottom:12px;letter-spacing:.03em}
+.card{background:white;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:16px 18px;margin-bottom:8px}
+.field-label{font-size:12px;color:var(--ink3);margin-bottom:6px;font-weight:400;letter-spacing:.1em;text-transform:uppercase}
+.field-inp{width:100%;border:none;border-bottom:1.5px solid var(--rule);background:transparent;padding:10px 0;font-size:18px;color:var(--ink)}
+.field-inp:focus{border-bottom-color:var(--ink)}
+
+.btn{border:none;border-radius:4px;font-weight:400;cursor:pointer;letter-spacing:.04em;transition:opacity .1s}
+.btn-primary{background:var(--ink);color:white;padding:13px 22px;font-size:15px}
+.btn-outline{background:white;border:1px solid var(--ink);color:var(--ink);padding:11px 18px;font-size:14px}
+.btn-gray{background:#eee;color:var(--ink2);padding:11px 18px;font-size:14px;border:1px solid var(--rule)}
+.btn-danger{background:var(--accent);color:white;padding:11px 18px;font-size:14px}
+.btn:disabled{opacity:.4;cursor:default}
+
+.csv-info{font-size:12px;color:var(--ink2);line-height:2;padding:12px;background:#f5f5f3;border-radius:4px}
+.csv-info b{color:var(--ink)}
+
+.setup-wrap{max-width:520px;margin:0 auto;padding:16px}
+.err-msg{color:var(--accent);font-size:12px;margin-top:6px}
+
+.section-label{padding:16px 18px 6px;font-size:12px;color:var(--ink3);letter-spacing:.12em;text-transform:uppercase}
+
+/* コートカード */
+.court-grid{display:grid;grid-template-columns:1fr;gap:10px;padding:12px 18px}
+@media(min-width:640px){.court-grid{grid-template-columns:1fr 1fr}}
+@media(min-width:1000px){.court-grid{grid-template-columns:1fr 1fr 1fr}}
+.court-card{background:white;border:1px solid var(--rule);border-radius:8px;padding:14px 16px;position:relative}
+.court-card.st-live{border-color:var(--live);box-shadow:0 0 0 1px var(--live) inset}
+.court-card.st-assigned{border-color:var(--wait)}
+.court-no{font-family:var(--mono);font-size:13px;color:var(--ink3);letter-spacing:.06em;margin-bottom:6px}
+.court-status{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;letter-spacing:.06em;padding:2px 8px;border-radius:10px;margin-bottom:8px}
+.court-status.idle{background:#eee;color:var(--ink3)}
+.court-status.assigned{background:#fef3c7;color:#92400e}
+.court-status.live{background:#dcfce7;color:#166534}
+.court-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.court-dot.live{animation:pulse 1.4s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.court-teams{font-size:16px;font-weight:700;color:var(--ink);line-height:1.5}
+.court-vs{color:var(--ink3);font-weight:400;font-size:13px;margin:0 4px}
+.court-score{font-family:var(--mono);font-size:26px;font-weight:500;color:var(--ink);margin-top:6px;letter-spacing:-.02em}
+.court-gamewins{font-family:var(--mono);font-size:12px;color:var(--ink3);margin-top:2px}
+.court-idle-msg{color:var(--ink3);font-size:14px;padding:8px 0}
+.court-code{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-top:4px}
+
+.queue-row{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--rule);background:white}
+.queue-idx{font-family:var(--mono);font-size:12px;color:var(--ink3);width:22px;flex-shrink:0}
+.queue-teams{font-size:14px;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.queue-time{font-family:var(--mono);font-size:12px;color:var(--ink3);flex-shrink:0}
+
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;display:flex;align-items:flex-end;justify-content:center}
+.modal{background:white;border-radius:12px 12px 0 0;padding:24px;width:100%;max-width:480px;max-height:80vh;overflow-y:auto}
+.modal-title{font-size:18px;font-weight:700;margin-bottom:8px;color:var(--ink)}
+.viewer-chip{display:inline-flex;align-items:center;gap:5px;background:#eee;color:var(--ink2);border-radius:4px;padding:4px 10px;font-size:12px;font-weight:400;border:1px solid var(--rule);margin-left:10px}
+.spinner{width:36px;height:36px;border:3px solid var(--rule);border-top-color:var(--ink);border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+var __EMBEDDED_CFG__={"apiKey":"AIzaSyBf5AlMcg8CCmLlhWzpEvk6-rpfzkZj6Xs","authDomain":"event-now2.firebaseapp.com","databaseURL":"https://event-now2-default-rtdb.firebaseio.com","projectId":"event-now2","storageBucket":"event-now2.firebasestorage.app","messagingSenderId":"716003781272","appId":"1:716003781272:web:0beae136cf9d4e26a07eed"};
+
+/* ══ 小さなDOMビルダー ══ */
+var _app=document.getElementById('app');
+function render(node){_app.innerHTML='';if(node)_app.appendChild(node);}
+function el(tag,attrs,ch){
+  var e=document.createElement(tag);
+  attrs=attrs||{};
+  Object.keys(attrs).forEach(function(k){
+    if(k==='style')Object.assign(e.style,attrs[k]);
+    else if(k.indexOf('on')===0)e[k]=attrs[k];
+    else if(k==='className')e.className=attrs[k];
+    else if(k==='value')e.value=attrs[k];
+    else if(k==='checked')e.checked=attrs[k];
+    else if(k==='disabled')e.disabled=attrs[k];
+    else if(k==='type'&&tag==='input')e.type=attrs[k];
+    else e.setAttribute(k,attrs[k]);
+  });
+  ch=ch||[];
+  if(!Array.isArray(ch))ch=[ch];
+  ch.forEach(function(c){if(c==null)return;if(typeof c==='string'||typeof c==='number')e.appendChild(document.createTextNode(c));else e.appendChild(c);});
+  return e;
+}
+function uid(){return Math.random().toString(36).slice(2,9);}
+function getBase(){return location.href.split('#')[0];}
+function parseHash(){
+  var h=location.hash.replace(/^#/,'');
+  if(!h)return{mode:'setup'};
+  var parts=h.split(':');
+  if(parts[0]==='admin')return{mode:'admin',eventId:parts[1]};
+  if(parts[0]==='view')return{mode:'view',eventId:parts[1]};
+  return{mode:'setup'};
+}
+
+/* ══ Firebase ══ */
+var _db=null,_listeners=[];
+function initFb(cfg){
+  try{
+    if(firebase.apps.length===0){firebase.initializeApp(cfg);}
+    _db=firebase.database();
+    return true;
+  }catch(e){console.error('Firebase init:',e);return false;}
+}
+function dbRef(eid){return _db.ref('taikainow/'+eid);}
+function dbListen(eid,cb){var ref=dbRef(eid);var h=ref.on('value',function(s){cb(s.val());},function(e){console.error(e);});_listeners.push({ref:ref,h:h});}
+function dbOff(){_listeners.forEach(function(l){try{l.ref.off('value',l.h);}catch(e){}});_listeners=[];}
+initFb(__EMBEDDED_CFG__);
+
+/* ══ CSVパース：時刻,試合コード,種目,選手A1,選手A2,選手B1,選手B2 ══ */
+function csvParseMatches(text){
+  var lines=text.trim().split('\n').filter(Boolean);
+  return lines.slice(1).map(function(line){
+    var cols=line.split(',').map(function(s){return s.trim().replace(/^"|"$/g,'');});
+    var time=cols[0]||'',code=cols[1]||'',type=(cols[2]||'').indexOf('ダブル')>=0?'doubles':'singles';
+    var a1=cols[3]||'',a2=cols[4]||'',b1=cols[5]||'',b2=cols[6]||'';
+    var teamA=[a1];if(type==='doubles'&&a2)teamA.push(a2);
+    var teamB=[b1];if(type==='doubles'&&b2)teamB.push(b2);
+    return{id:uid(),time:time,matchCode:code,matchType:type,teamA:teamA,teamB:teamB};
+  }).filter(function(m){return m.matchCode||m.teamA[0]||m.teamB[0];});
+}
+function readCsvFile(file,callback){
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var buf=e.target.result,utf8=null;
+    try{utf8=new TextDecoder('utf-8',{fatal:true}).decode(buf);}catch(err){utf8=null;}
+    if(utf8){callback(utf8);return;}
+    try{callback(new TextDecoder('shift-jis').decode(buf));}
+    catch(err2){callback(new TextDecoder('utf-8',{fatal:false}).decode(buf));}
+  };
+  reader.readAsArrayBuffer(file);
+}
+function toArray(val){
+  if(!val)return[];
+  if(Array.isArray(val))return val;
+  return Object.keys(val).sort(function(a,b){return Number(a)-Number(b);}).map(function(k){return val[k];});
+}
+
+/* ══ 自動配信ロジック（コアロジック：テスト容易にするため純関数化） ══
+   data: {courtCount, queue:[...], courts:{ "1":{status,...}, ... }}
+   戻り値: 変更後の data（変更が無ければ同一参照を返す） */
+function computeDispatch(data){
+  if(!data)return data;
+  var courtCount=data.courtCount||0;
+  var queue=toArray(data.queue).slice();
+  var courts=Object.assign({},data.courts||{});
+  var changed=false;
+  for(var i=1;i<=courtCount;i++){
+    var key=String(i);
+    var court=courts[key]||{status:'idle',match:null,live:null,lastResult:null};
+    if(court.status==='idle'&&queue.length>0){
+      var next=queue.shift();
+      courts[key]=Object.assign({},court,{status:'assigned',match:next,live:null,assignedAt:Date.now()});
+      changed=true;
+    }
+  }
+  if(!changed)return data;
+  return Object.assign({},data,{queue:queue,courts:courts});
+}
+
+/* ══ 管理者クライアントでのディスパッチ監視 ══
+   同時に複数の管理端末が開いていても安全なようtransactionで適用 */
+function watchAndDispatch(eventId){
+  var ref=dbRef(eventId);
+  ref.on('value',function(snap){
+    var data=snap.val();
+    if(!data)return;
+    var next=computeDispatch(data);
+    if(next!==data){
+      ref.transaction(function(cur){
+        if(!cur)return cur;
+        return computeDispatch(cur);
+      });
+    }
+  });
+}
+
+/* ══ localStorage: 作成した大会の一覧（管理者が後で戻れるように） ══ */
+var EVT_LIST_KEY='taikainow_events';
+function getEventsList(){try{return JSON.parse(localStorage.getItem(EVT_LIST_KEY)||'[]');}catch(e){return[];}}
+function saveEventToList(meta){
+  var list=getEventsList().filter(function(e){return e.eventId!==meta.eventId;});
+  list.unshift(meta);
+  localStorage.setItem(EVT_LIST_KEY,JSON.stringify(list.slice(0,20)));
+}
+
+/* ══ 表示ヘルパー ══ */
+function teamLabel(team){return (team||[]).filter(Boolean).join(' / ')||'（未定）';}
+function fmtScore(live){
+  if(!live)return null;
+  return live.scoreA+' - '+live.scoreB;
+}
+
+/* ══ 準備画面（新規作成） ══ */
+function mountSetup(){
+  var wrap=el('div',{className:'setup-wrap'});
+  wrap.appendChild(el('div',{className:'section-title'},'大会Now - 新しい大会を作成'));
+
+  var nameLabel=el('div',{className:'field-label'},'大会名');
+  var nameInp=el('input',{className:'field-inp',placeholder:'第26回 ○○バドミントン大会'});
+  var card1=el('div',{className:'card'},[nameLabel,nameInp]);
+
+  var courtLabel=el('div',{className:'field-label'},'コート数');
+  var courtInp=el('input',{className:'field-inp',type:'number',value:'8',min:'1',max:'40'});
+  var card2=el('div',{className:'card'},[courtLabel,courtInp]);
+
+  var csvLabel=el('div',{className:'field-label'},'試合キュー（CSV）');
+  var csvFile=el('input',{type:'file',accept:'.csv',style:{display:'block',marginTop:'8px'}});
+  var csvInfo=el('div',{className:'csv-info',style:{marginTop:'10px'}},[
+    el('div',{},[el('b',{},'列構成：'),'時刻,試合コード,種目,選手A1,選手A2,選手B1,選手B2']),
+    el('div',{},'種目は「シングルス」または「ダブルス」。1行目はヘッダーとして無視されます。'),
+    el('div',{},'上から順に、空いたコートへ自動的に配信されます。')
+  ]);
+  var csvPreview=el('div',{style:{marginTop:'10px',fontSize:'13px',color:'var(--ink2)'}});
+  var parsedQueue=[];
+  csvFile.onchange=function(){
+    var f=csvFile.files[0];
+    if(!f)return;
+    readCsvFile(f,function(text){
+      parsedQueue=csvParseMatches(text);
+      csvPreview.textContent=parsedQueue.length+'件の試合を読み込みました（先頭: '+(parsedQueue[0]?parsedQueue[0].matchCode+' '+teamLabel(parsedQueue[0].teamA)+' vs '+teamLabel(parsedQueue[0].teamB):'-')+'）';
+    });
+  };
+  var card3=el('div',{className:'card'},[csvLabel,csvFile,csvInfo,csvPreview]);
+
+  var errEl=el('div',{className:'err-msg'});
+  var startBtn=el('button',{className:'btn btn-primary',style:{width:'100%',marginTop:'8px'}},'この内容で大会を作成');
+  startBtn.onclick=function(){
+    errEl.textContent='';
+    var eventName=nameInp.value.trim();
+    var courtCount=parseInt(courtInp.value,10);
+    if(!eventName){errEl.textContent='大会名を入力してください';return;}
+    if(!courtCount||courtCount<1){errEl.textContent='コート数を正しく入力してください';return;}
+    if(parsedQueue.length===0){errEl.textContent='試合キューのCSVを読み込んでください';return;}
+
+    var eventId=uid()+uid();
+    var initial={
+      eventName:eventName,
+      courtCount:courtCount,
+      createdAt:Date.now(),
+      queue:parsedQueue,
+      courts:{}
+    };
+    dbRef(eventId).set(initial,function(err){
+      if(err){errEl.textContent='作成に失敗しました: '+err.message;return;}
+      saveEventToList({eventId:eventId,eventName:eventName,createdAt:Date.now()});
+      location.hash='admin:'+eventId;
+      startAdmin(eventId);
+    });
+  };
+
+  var pastList=getEventsList();
+  var pastWrap=null;
+  if(pastList.length>0){
+    pastWrap=el('div',{style:{marginTop:'24px'}});
+    pastWrap.appendChild(el('div',{className:'section-title'},'これまでの大会'));
+    pastList.forEach(function(ev){
+      var row=el('div',{className:'card',style:{cursor:'pointer'}});
+      row.appendChild(el('div',{style:{fontWeight:700}},ev.eventName||'（無題）'));
+      row.appendChild(el('div',{style:{fontSize:12,color:'var(--ink3)',marginTop:4}},new Date(ev.createdAt).toLocaleString('ja-JP')));
+      row.onclick=function(){location.hash='admin:'+ev.eventId;startAdmin(ev.eventId);};
+      pastWrap.appendChild(row);
+    });
+  }
+
+  wrap.appendChild(card1);wrap.appendChild(card2);wrap.appendChild(card3);
+  wrap.appendChild(errEl);wrap.appendChild(startBtn);
+  if(pastWrap)wrap.appendChild(pastWrap);
+
+  var root=el('div',{style:{minHeight:'100vh'}});
+  root.appendChild(el('div',{className:'appbar'},[el('span',{className:'appbar-title'},'大会Now')]));
+  root.appendChild(wrap);
+  render(root);
+}
+
+/* ══ コートカード描画 ══ */
+function buildCourtCard(courtNo,court){
+  court=court||{status:'idle'};
+  var statusClass=court.status==='live'?'live':(court.status==='assigned'?'assigned':'idle');
+  var statusLabel=court.status==='live'?'進行中':(court.status==='assigned'?'配信済み・開始待ち':'空き');
+  var card=el('div',{className:'court-card st-'+statusClass});
+  card.appendChild(el('div',{className:'court-no'},'コート '+courtNo));
+  card.appendChild(el('div',{className:'court-status '+statusClass},[
+    el('span',{className:'court-dot '+(statusClass==='live'?'live':'')}),
+    statusLabel
+  ]));
+  if(court.status==='idle'||!court.match){
+    card.appendChild(el('div',{className:'court-idle-msg'},'次の試合待ち'));
+  }else{
+    var m=court.match;
+    card.appendChild(el('div',{className:'court-teams'},[
+      teamLabel(m.teamA),el('span',{className:'court-vs'},'vs'),teamLabel(m.teamB)
+    ]));
+    if(m.matchCode)card.appendChild(el('div',{className:'court-code'},m.matchCode));
+    if(court.status==='live'&&court.live){
+      card.appendChild(el('div',{className:'court-score'},fmtScore(court.live)));
+      if(typeof court.live.gameWinsA==='number'){
+        card.appendChild(el('div',{className:'court-gamewins'},'ゲームカウント '+court.live.gameWinsA+' - '+court.live.gameWinsB));
+      }
+    }
+  }
+  return card;
+}
+
+/* ══ 進行画面（管理者／閲覧者共通） ══ */
+function mountProgress(eventId,data,role){
+  var isAdmin=role==='admin';
+  var root=el('div',{style:{minHeight:'100vh'}});
+  var appbar=el('div',{className:'appbar'},[
+    el('span',{className:'appbar-title'},(data.eventName||'大会Now')),
+    isAdmin?null:el('span',{className:'viewer-chip'},'閲覧')
+  ]);
+  root.appendChild(appbar);
+
+  if(isAdmin){
+    var ctrlRow=el('div',{style:{display:'flex',gap:8,padding:'12px 18px',borderBottom:'1px solid var(--rule)'}});
+    var shareBtn=el('button',{className:'btn btn-outline'},'共有リンクをコピー');
+    shareBtn.onclick=function(){
+      var url=getBase()+'#view:'+eventId;
+      try{navigator.clipboard.writeText(url);}catch(e){}
+      shareBtn.textContent='✓ コピーしました';
+      setTimeout(function(){shareBtn.textContent='共有リンクをコピー';},1800);
+    };
+    ctrlRow.appendChild(shareBtn);
+    root.appendChild(ctrlRow);
+  }
+
+  root.appendChild(el('div',{className:'section-label'},'コート状況'));
+  var grid=el('div',{className:'court-grid'});
+  var courtCount=data.courtCount||0;
+  for(var i=1;i<=courtCount;i++){
+    grid.appendChild(buildCourtCard(i,(data.courts||{})[String(i)]));
+  }
+  root.appendChild(grid);
+
+  var queue=toArray(data.queue);
+  root.appendChild(el('div',{className:'section-label'},'キュー待ち（残り'+queue.length+'件）'));
+  var queueWrap=el('div');
+  queue.slice(0,10).forEach(function(m,idx){
+    queueWrap.appendChild(el('div',{className:'queue-row'},[
+      el('span',{className:'queue-idx'},String(idx+1)),
+      el('span',{className:'queue-teams'},teamLabel(m.teamA)+' vs '+teamLabel(m.teamB)),
+      el('span',{className:'queue-time'},m.time||'')
+    ]));
+  });
+  if(queue.length===0){
+    queueWrap.appendChild(el('div',{style:{padding:'12px 18px',color:'var(--ink3)',fontSize:13}},'キューは空です'));
+  }
+  root.appendChild(queueWrap);
+
+  render(root);
+}
+
+/* ══ 起動 ══ */
+function startAdmin(eventId){
+  watchAndDispatch(eventId);
+  dbListen(eventId,function(data){
+    if(!data){
+      render(el('div',{style:{padding:20}},'大会データが見つかりません'));
+      return;
+    }
+    mountProgress(eventId,data,'admin');
+  });
+}
+function startView(eventId){
+  dbListen(eventId,function(data){
+    if(!data){
+      render(el('div',{style:{padding:20}},'大会データが見つかりません'));
+      return;
+    }
+    mountProgress(eventId,data,'view');
+  });
+}
+
+function boot(){
+  var h=parseHash();
+  if(h.mode==='admin'&&h.eventId){startAdmin(h.eventId);return;}
+  if(h.mode==='view'&&h.eventId){startView(h.eventId);return;}
+  mountSetup();
+}
+window.addEventListener('hashchange',function(){dbOff();boot();});
+boot();
+</script>
+</body>
+</html>
