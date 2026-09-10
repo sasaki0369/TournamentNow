@@ -385,7 +385,243 @@ function watchAndDispatch(eventId){
 
 
 /* ══ localStorage: 作成した大会の一覧（管理者が後で戻れるように） ══ */
+/* ══ 進行状況のエクスポート／インポート ══
+   リーグ・ブラケット・キュー・コート状況をすべて含む1枚のCSVとして書き出し／読み込みする */
+var EXPORT_HEADER = ['section','groupName','matchIndex','round','matchCode','time','type',
+  'teamA1','teamA2','teamB1','teamB2','slotAType','slotAValue','slotBType','slotBValue',
+  'status','courtNo','winner','gameWinsA','gameWinsB','pointsA','pointsB'];
+
+function csvCell(v){
+  v = (v===null||v===undefined) ? '' : String(v);
+  return (v.indexOf(',')>=0 || v.indexOf('"')>=0) ? '"'+v.replace(/"/g,'""')+'"' : v;
+}
+function slotToTypeValue(data, ref){
+  if(!ref) return ['',''];
+  if(ref.type==='fixed') return ['fixed', (ref.names||[]).join('・')];
+  if(ref.type==='leagueRank'){
+    var lg = (data.leagues||{})[ref.leagueId];
+    return ['leagueRank', (lg?lg.name:ref.leagueId)+':'+ref.rank];
+  }
+  if(ref.type==='matchWinner'){
+    var br = (data.brackets||{})[ref.bracketId];
+    return ['matchWinner', (br?br.name:ref.bracketId)+':'+ref.matchId];
+  }
+  return ['',''];
+}
+
+function findCourtFor(data, refType, refId, refMatchIndex){
+  var courts = data.courts || {};
+  var found = null;
+  Object.keys(courts).forEach(function(cno){
+    var c = courts[cno];
+    if(c && c.match && c.match.refType===refType && c.match.refId===refId && c.match.refMatchIndex===refMatchIndex){
+      found = cno;
+    }
+  });
+  return found;
+}
+
+function exportProgressCsv(data){
+  var rows = [EXPORT_HEADER];
+  var leagues = data.leagues || {};
+  Object.keys(leagues).forEach(function(lid){
+    var lg = leagues[lid];
+    toArray(lg.matches).forEach(function(m){
+      var a = lg.participants[m.i]||[], b = lg.participants[m.j]||[];
+      var courtNo = m.result ? '' : findCourtFor(data, 'league', lid, m.id);
+      var status = m.result ? 'done' : (courtNo ? 'court' : 'pending');
+      rows.push(['league', lg.name, m.id, '', '', '', lg.type||'singles',
+        a[0]||'',a[1]||'', b[0]||'',b[1]||'', '','','','',
+        status, courtNo||'', m.result?m.result.winner:'', m.result?m.result.gameWinsA:'', m.result?m.result.gameWinsB:'',
+        m.result?m.result.pointsA:'', m.result?m.result.pointsB:'']);
+    });
+  });
+  var brackets = data.brackets || {};
+  Object.keys(brackets).forEach(function(bid){
+    var br = brackets[bid];
+    toArray(br.matches).forEach(function(m){
+      var sa = slotToTypeValue(data, m.slotA), sb = slotToTypeValue(data, m.slotB);
+      var a = m.teamA||[], b = m.teamB||[];
+      var courtNo = m.result ? '' : findCourtFor(data, 'bracket', bid, m.id);
+      var status = m.result ? 'done' : (courtNo ? 'court' : 'pending');
+      rows.push(['bracket', br.name, m.id, m.round||1, '', '', (a.length>1||b.length>1)?'doubles':'singles',
+        a[0]||'',a[1]||'', b[0]||'',b[1]||'', sa[0],sa[1],sb[0],sb[1],
+        status, courtNo||'', m.result?m.result.winner:'', m.result?m.result.gameWinsA:'', m.result?m.result.gameWinsB:'',
+        m.result?m.result.pointsA:'', m.result?m.result.pointsB:'']);
+    });
+  });
+  // 「リーグ／ブラケットに属さない試合」で、既にコートに割り当て済みのものは
+  // 上のループで courtNo が付いて出力済みなので、courts側では二重に出力しない。
+  var courts = data.courts || {};
+  var alreadyExported = {};
+  Object.keys(courts).forEach(function(cno){
+    var c = courts[cno];
+    if(c && c.match && (c.match.refType==='league' || c.match.refType==='bracket')){
+      alreadyExported[cno] = true;
+    }
+  });
+  toArray(data.queue).forEach(function(m){
+    if(m.refType==='league' || m.refType==='bracket') return; // リーグ／ブラケット側の行で出力済み扱いにするため重複させない
+    rows.push(['queue','', '', '', m.matchCode||'', m.time||'', m.matchType||'singles',
+      (m.teamA||[])[0]||'', (m.teamA||[])[1]||'', (m.teamB||[])[0]||'', (m.teamB||[])[1]||'',
+      '','','','', 'pending', '', '','','','','']);
+  });
+  Object.keys(courts).forEach(function(cno){
+    var c = courts[cno];
+    if(c && c.match && !alreadyExported[cno]){
+      rows.push(['queue','', '', '', c.match.matchCode||'', c.match.time||'', c.match.matchType||'singles',
+        (c.match.teamA||[])[0]||'', (c.match.teamA||[])[1]||'', (c.match.teamB||[])[0]||'', (c.match.teamB||[])[1]||'',
+        '','','','', 'court', cno, '','','','','']);
+    }
+  });
+  return rows.map(function(r){ return r.map(csvCell).join(','); }).join('\n');
+}
+
+
+function parseProgressCsv(text){
+  var lines = text.split(/\r?\n/).map(function(l){return l;}).filter(function(l){return l.trim()!=='';});
+  var rows = lines.slice(1).map(function(line){
+    // 簡易CSVパース（ダブルクォート対応）
+    var cells=[]; var cur=''; var inQ=false;
+    for(var i=0;i<line.length;i++){
+      var ch=line[i];
+      if(inQ){
+        if(ch==='"'){ if(line[i+1]==='"'){cur+='"'; i++;} else inQ=false; }
+        else cur+=ch;
+      }else{
+        if(ch==='"') inQ=true;
+        else if(ch===','){ cells.push(cur); cur=''; }
+        else cur+=ch;
+      }
+    }
+    cells.push(cur);
+    var o = {};
+    EXPORT_HEADER.forEach(function(h,idx){ o[h]=cells[idx]!==undefined?cells[idx]:''; });
+    return o;
+  });
+
+  var leagues = {};
+  var brackets = {};
+  var queue = [];
+  var courts = {};
+
+  var leagueRows = rows.filter(function(r){return r.section==='league';});
+  var leagueGroups = {};
+  leagueRows.forEach(function(r){ leagueGroups[r.groupName]=leagueGroups[r.groupName]||[]; leagueGroups[r.groupName].push(r); });
+  var leagueNameToId = {};
+  Object.keys(leagueGroups).forEach(function(name){
+    var lid = uid();
+    leagueNameToId[name] = lid;
+    var grows = leagueGroups[name].sort(function(a,b){return Number(a.matchIndex)-Number(b.matchIndex);});
+    var participants = []; var pairIndex = {};
+    function idxOf(a1,a2){
+      var key = a1+'|'+a2;
+      if(pairIndex[key]===undefined){ pairIndex[key]=participants.length; participants.push([a1,a2].filter(Boolean)); }
+      return pairIndex[key];
+    }
+    var matches = grows.map(function(r){
+      var i = idxOf(r.teamA1, r.teamA2);
+      var j = idxOf(r.teamB1, r.teamB2);
+      var result = r.status==='done' ? { winner:r.winner, gameWinsA:Number(r.gameWinsA)||0, gameWinsB:Number(r.gameWinsB)||0, pointsA:Number(r.pointsA)||0, pointsB:Number(r.pointsB)||0 } : null;
+      return { id:Number(r.matchIndex)||0, i:i, j:j, result:result, _status:r.status, _courtNo:r.courtNo };
+    });
+    leagues[lid] = { id:lid, name:name, type: (grows[0]&&grows[0].type)||'singles', participants:participants,
+      matches: matches.map(function(m){ return { id:m.id, i:m.i, j:m.j, result:m.result }; }) };
+    // 未実施でコート未割当の試合はキューへ、コート割当中の試合は該当コートへ復元
+    matches.forEach(function(m){
+      if(m.result) return;
+      var item = {
+        id: uid(), time:'', matchCode: name+'-'+(m.id+1), matchType: leagues[lid].type,
+        teamA: leagues[lid].participants[m.i], teamB: leagues[lid].participants[m.j],
+        refType:'league', refId:lid, refMatchIndex:m.id
+      };
+      if(m._status==='court' && m._courtNo){
+        courts[m._courtNo] = { status:'assigned', match:item, live:null, lastResult:null, assignedAt:Date.now() };
+      }else{
+        queue.push(item);
+      }
+    });
+  });
+
+  var bracketRows = rows.filter(function(r){return r.section==='bracket';});
+  var bracketGroups = {};
+  bracketRows.forEach(function(r){ bracketGroups[r.groupName]=bracketGroups[r.groupName]||[]; bracketGroups[r.groupName].push(r); });
+  var bracketNameToId = {};
+  Object.keys(bracketGroups).forEach(function(name){ bracketNameToId[name]=uid(); });
+  function parseSlot(type, value){
+    if(!type) return null;
+    if(type==='fixed') return { type:'fixed', names: value.split('・').map(function(s){return s.trim();}).filter(Boolean) };
+    if(type==='leagueRank'){
+      var parts = value.split(':'); 
+      var lid = leagueNameToId[parts[0]] || parts[0];
+      return { type:'leagueRank', leagueId: lid, rank: Number(parts[1])||1 };
+    }
+    if(type==='matchWinner'){
+      var p2 = value.split(':');
+      var bid = bracketNameToId[p2[0]] || p2[0];
+      return { type:'matchWinner', bracketId: bid, matchId: Number(p2[1])||0 };
+    }
+    return null;
+  }
+  Object.keys(bracketGroups).forEach(function(name){
+    var bid = bracketNameToId[name];
+    var grows = bracketGroups[name].sort(function(a,b){return Number(a.matchIndex)-Number(b.matchIndex);});
+    var matches = grows.map(function(r){
+      var teamA = (r.teamA1||r.teamA2) ? [r.teamA1,r.teamA2].filter(Boolean) : null;
+      var teamB = (r.teamB1||r.teamB2) ? [r.teamB1,r.teamB2].filter(Boolean) : null;
+      var result = r.status==='done' ? { winner:r.winner, gameWinsA:Number(r.gameWinsA)||0, gameWinsB:Number(r.gameWinsB)||0, pointsA:Number(r.pointsA)||0, pointsB:Number(r.pointsB)||0 } : null;
+      var queuedAlready = !!(teamA && teamB && (r.status==='court' || r.status==='pending'));
+      return {
+        id:Number(r.matchIndex)||0, round:Number(r.round)||1,
+        slotA: parseSlot(r.slotAType, r.slotAValue), slotB: parseSlot(r.slotBType, r.slotBValue),
+        teamA: teamA, teamB: teamB, queued: queuedAlready, result: result,
+        _status:r.status, _courtNo:r.courtNo
+      };
+    });
+    brackets[bid] = { id:bid, name:name, matches: matches.map(function(m){
+      return { id:m.id, round:m.round, slotA:m.slotA, slotB:m.slotB, teamA:m.teamA, teamB:m.teamB, queued:m.queued, result:m.result };
+    }) };
+    // 両者確定済みだが未実施の試合は、キューまたはコートへ復元する
+    matches.forEach(function(m){
+      if(m.result || !m.teamA || !m.teamB) return;
+      var item = {
+        id: uid(), time:'', matchCode: name+'-'+m.id, matchType: (m.teamA.length>1||m.teamB.length>1)?'doubles':'singles',
+        teamA:m.teamA, teamB:m.teamB, refType:'bracket', refId:bid, refMatchIndex:m.id
+      };
+      if(m._status==='court' && m._courtNo){
+        courts[m._courtNo] = { status:'assigned', match:item, live:null, lastResult:null, assignedAt:Date.now() };
+      }else{
+        queue.push(item);
+      }
+    });
+  });
+
+  rows.filter(function(r){return r.section==='queue';}).forEach(function(r){
+    var item = {
+      id: uid(), time:r.time, matchCode:r.matchCode, matchType:r.type||'singles',
+      teamA:[r.teamA1,r.teamA2].filter(Boolean), teamB:[r.teamB1,r.teamB2].filter(Boolean)
+    };
+    if(r.status==='court' && r.courtNo){
+      courts[r.courtNo] = { status:'assigned', match:item, live:null, lastResult:null, assignedAt:Date.now() };
+    }else{
+      queue.push(item);
+    }
+  });
+
+  return { leagues:leagues, brackets:brackets, queue:queue, courts:courts };
+}
+
+function downloadTextFile(filename, text){
+  var blob = new Blob(["\uFEFF"+text], {type:'text/csv;charset=utf-8;'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 var EVT_LIST_KEY='taikainow_events';
+
 function getEventsList(){try{return JSON.parse(localStorage.getItem(EVT_LIST_KEY)||'[]');}catch(e){return[];}}
 function saveEventToList(meta){
   var list=getEventsList().filter(function(e){return e.eventId!==meta.eventId;});
@@ -802,7 +1038,7 @@ function mountProgress(eventId,data,role){
   root.appendChild(tabs);
 
   if(isAdmin){
-    var ctrlRow=el('div',{style:{display:'flex',gap:8,padding:'12px 18px',borderBottom:'1px solid var(--rule)'}});
+    var ctrlRow=el('div',{style:{display:'flex',gap:8,padding:'12px 18px',borderBottom:'1px solid var(--rule)',flexWrap:'wrap'}});
     var shareBtn=el('button',{className:'btn btn-outline'},'共有リンクをコピー');
     shareBtn.onclick=function(){
       var url=getBase()+'#view:'+eventId;
@@ -811,6 +1047,35 @@ function mountProgress(eventId,data,role){
       setTimeout(function(){shareBtn.textContent='共有リンクをコピー';},1800);
     };
     ctrlRow.appendChild(shareBtn);
+
+    var exportBtn=el('button',{className:'btn btn-outline'},'進行状況をエクスポート');
+    exportBtn.onclick=function(){
+      var csv = exportProgressCsv(data);
+      downloadTextFile((data.eventName||'大会')+'_進行状況.csv', csv);
+    };
+    ctrlRow.appendChild(exportBtn);
+
+    var importInp=el('input',{type:'file',accept:'.csv',style:{display:'none'}});
+    var importBtn=el('button',{className:'btn btn-outline'},'進行状況をインポート');
+    importBtn.onclick=function(){ importInp.click(); };
+    importInp.onchange=function(){
+      var f = importInp.files[0];
+      if(!f) return;
+      var reader = new FileReader();
+      reader.onload=function(e){
+        var text;
+        try{ text = new TextDecoder('utf-8',{fatal:true}).decode(e.target.result); }
+        catch(err){ text = new TextDecoder('utf-8',{fatal:false}).decode(e.target.result); }
+        var imported = parseProgressCsv(text);
+        if(!confirm('現在の大会の「リーグ・ブラケット・キュー・コート」をインポート内容で置き換えます。よろしいですか？')) return;
+        dbRef(eventId).update({ leagues:imported.leagues, brackets:imported.brackets, queue:imported.queue, courts:imported.courts })
+          .then(function(){ alert('インポートしました。'); })
+          .catch(function(e){ alert('失敗しました: '+e.message); });
+      };
+      reader.readAsArrayBuffer(f);
+    };
+    ctrlRow.appendChild(importBtn); ctrlRow.appendChild(importInp);
+
     root.appendChild(ctrlRow);
   }
 
