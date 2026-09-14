@@ -649,7 +649,7 @@ function mountSetup(){
   var card1=el('div',{className:'card'},[nameLabel,nameInp]);
 
   var courtLabel=el('div',{className:'field-label'},'コート数');
-  var courtInp=el('input',{className:'field-inp',type:'number',value:'8',min:'1',max:'40'});
+  var courtInp=el('input',{className:'field-inp',type:'number',value:'12',min:'1',max:'40'});
   var card2=el('div',{className:'card'},[courtLabel,courtInp]);
 
   var csvLabel=el('div',{className:'field-label'},'試合キュー（CSV）');
@@ -664,6 +664,9 @@ function mountSetup(){
   csvFile.onchange=function(){
     var f=csvFile.files[0];
     if(!f)return;
+    if(!nameInp.value.trim()){
+      nameInp.value = f.name.replace(/\.[^.]+$/, '');
+    }
     readCsvFile(f,function(text){
       parsedQueue=csvParseMatches(text);
       csvPreview.textContent=parsedQueue.length+'件の試合を読み込みました（先頭: '+(parsedQueue[0]?parsedQueue[0].matchCode+' '+teamLabel(parsedQueue[0].teamA)+' vs '+teamLabel(parsedQueue[0].teamB):'-')+'）';
@@ -994,6 +997,69 @@ function buildCreateBracketForm(eventId, data, refreshFn){
   return form;
 }
 
+/* ══ キューに残っている試合コードから、既存の総当たりブロックを自動検出してリーグ化する ══
+   例: A2-A-1, A2-A-2, ... A2-A-6 → グループ名「A2-A」として1つのリーグにまとめる */
+function autoDetectLeaguesFromQueue(data){
+  var groups = {};
+  function collect(item, courtNo){
+    if(!item || !item.matchCode) return;
+    if(item.refType) return; // 既にリーグ／ブラケットに紐付いている試合は対象外
+    var m = /^(.*)-(\d+)$/.exec(item.matchCode);
+    if(!m) return;
+    var groupName = m[1];
+    var num = parseInt(m[2], 10);
+    groups[groupName] = groups[groupName] || [];
+    groups[groupName].push({ num: num, item: item, courtNo: courtNo || null });
+  }
+  toArray(data.queue).forEach(function(it){ collect(it, null); });
+  Object.keys(data.courts||{}).forEach(function(cno){
+    var c = data.courts[cno];
+    if(c && c.match) collect(c.match, cno);
+  });
+  var candidateGroups = Object.keys(groups).filter(function(g){ return groups[g].length >= 2; }).sort();
+  return { groups: groups, candidateGroups: candidateGroups };
+}
+
+function buildLeaguesFromGroups(data, groupNames){
+  var detection = autoDetectLeaguesFromQueue(data);
+  var leagues = Object.assign({}, data.leagues||{});
+  var queue = toArray(data.queue).slice();
+  var courts = Object.assign({}, data.courts||{});
+
+  groupNames.forEach(function(groupName){
+    var entries = detection.groups[groupName];
+    if(!entries) return;
+    entries = entries.slice().sort(function(a,b){ return a.num - b.num; });
+
+    var participants = []; var pairIndex = {};
+    function idxOf(team){
+      var key = JSON.stringify(team||[]);
+      if(pairIndex[key]===undefined){ pairIndex[key]=participants.length; participants.push(team||[]); }
+      return pairIndex[key];
+    }
+    var lid = uid();
+    var matches = entries.map(function(e){
+      return { id: e.num-1, i: idxOf(e.item.teamA), j: idxOf(e.item.teamB), result: null };
+    });
+    var type = (entries[0].item.matchType) || 'singles';
+    leagues[lid] = { id:lid, name:groupName, type:type, participants:participants, matches:matches };
+
+    entries.forEach(function(e){
+      var refInfo = { refType:'league', refId:lid, refMatchIndex: e.num-1 };
+      if(e.courtNo){
+        courts[e.courtNo] = Object.assign({}, courts[e.courtNo], {
+          match: Object.assign({}, courts[e.courtNo].match, refInfo)
+        });
+      }else{
+        var qi = queue.indexOf(e.item);
+        if(qi>=0) queue[qi] = Object.assign({}, queue[qi], refInfo);
+      }
+    });
+  });
+
+  return { leagues:leagues, queue:queue, courts:courts };
+}
+
 function buildTournamentView(eventId, data, isAdmin){
   var wrap = el('div');
   var leagues = data.leagues || {};
@@ -1001,6 +1067,36 @@ function buildTournamentView(eventId, data, isAdmin){
   function refresh(){ /* Firebaseの.on('value')経由で自動的に再描画されるため何もしなくてよい */ }
 
   wrap.appendChild(el('div',{className:'section-label'},'リーグ表'));
+  if(isAdmin){
+    var detection = autoDetectLeaguesFromQueue(data);
+    if(detection.candidateGroups.length > 0){
+      var autoBox = el('div',{className:'create-form'});
+      autoBox.appendChild(el('div',{className:'section-title'},'キューの試合コードから自動検出'));
+      autoBox.appendChild(el('div',{style:{fontSize:12,color:'var(--ink3)',marginBottom:8}},
+        '試合コードの末尾番号（例: A2-A-1〜A2-A-6）から、同じブロックの試合をまとめてリーグ化できます。'));
+      var checks = [];
+      detection.candidateGroups.forEach(function(g){
+        var row = el('label',{style:{display:'flex',alignItems:'center',gap:'8px',fontSize:13,marginBottom:'6px'}});
+        var cb = document.createElement('input'); cb.type='checkbox'; cb.checked=true; cb.value=g;
+        checks.push(cb);
+        row.appendChild(cb);
+        row.appendChild(document.createTextNode(g+'（'+detection.groups[g].length+'試合）'));
+        autoBox.appendChild(row);
+      });
+      var detectMsg = el('div',{className:'ok-msg'});
+      var detectBtn = el('button',{className:'btn btn-primary',style:{marginTop:8}},'選択したグループをリーグとして登録');
+      detectBtn.onclick=function(){
+        var selected = checks.filter(function(c){return c.checked;}).map(function(c){return c.value;});
+        if(selected.length===0){ return; }
+        var result = buildLeaguesFromGroups(data, selected);
+        dbRef(eventId).update({ leagues: result.leagues, queue: result.queue, courts: result.courts })
+          .then(function(){ detectMsg.textContent = selected.length+'件のリーグを登録しました。'; })
+          .catch(function(e){ detectMsg.className='err'; detectMsg.textContent='失敗: '+e.message; });
+      };
+      autoBox.appendChild(detectBtn); autoBox.appendChild(detectMsg);
+      wrap.appendChild(autoBox);
+    }
+  }
   if(Object.keys(leagues).length===0){
     wrap.appendChild(el('div',{style:{padding:'10px 18px',color:'var(--ink3)',fontSize:13}},'まだリーグがありません。'));
   }
