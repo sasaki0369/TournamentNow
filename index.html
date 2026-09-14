@@ -1153,6 +1153,57 @@ function settingsRow(label, sub, actionEl){
 function buildSettingsView(eventId, data){
   var wrap = el('div',{style:{paddingBottom:'24px'}});
 
+  // --- 試合ルール（バドる連携時に自動反映） ---
+  var rulesSection = el('div',{className:'settings-section'});
+  rulesSection.appendChild(el('div',{className:'settings-section-title'},'試合ルール'));
+  var rules = Object.assign({ format:'best3', points:15, deuce:true, deuceMax:21 }, data.matchRules||{});
+
+  function saveRules(patch){
+    var next = Object.assign({}, rules, patch);
+    dbRef(eventId).child('matchRules').set(next);
+  }
+
+  var rulesCard = el('div',{className:'settings-list',style:{padding:'14px 16px'}});
+
+  function segRow(label, options, current, onPick){
+    var row = el('div',{style:{marginBottom:'12px'}});
+    row.appendChild(el('div',{className:'settings-row-sub',style:{marginBottom:'6px'}},label));
+    var seg = el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}});
+    options.forEach(function(opt){
+      var btn = el('button',{className:'pill-btn'+(current===opt.value?' pill-dark':'')},opt.label);
+      btn.onclick=function(){ onPick(opt.value); };
+      seg.appendChild(btn);
+    });
+    row.appendChild(seg);
+    return row;
+  }
+
+  rulesCard.appendChild(segRow('試合形式',
+    [{value:'best3',label:'3ゲームマッチ'},{value:'single',label:'1ゲームマッチ'}],
+    rules.format, function(v){ saveRules({format:v}); }));
+
+  rulesCard.appendChild(segRow('得点',
+    [{value:15,label:'15点'},{value:21,label:'21点'}],
+    rules.points, function(v){ saveRules({points:v, deuceMax: v===15?21:30}); }));
+
+  rulesCard.appendChild(segRow('セッティング（デュース）',
+    [{value:true,label:'あり'},{value:false,label:'なし'}],
+    rules.deuce, function(v){ saveRules({deuce:v}); }));
+
+  if(rules.deuce){
+    var deuceMaxRow = el('div',{});
+    deuceMaxRow.appendChild(el('div',{className:'settings-row-sub',style:{marginBottom:'6px'}},'セッティング時の最大点'));
+    var deuceMaxInp = el('input',{className:'settings-inp',type:'number',value:String(rules.deuceMax),style:{maxWidth:'120px'}});
+    deuceMaxInp.onchange=function(){ saveRules({deuceMax: parseInt(deuceMaxInp.value,10)||rules.points+6}); };
+    deuceMaxRow.appendChild(deuceMaxInp);
+    rulesCard.appendChild(deuceMaxRow);
+  }
+
+  rulesSection.appendChild(rulesCard);
+  rulesSection.appendChild(el('div',{className:'settings-row-sub',style:{margin:'8px 4px 0'}},
+    '連携中のバドるには、試合開始時にこのルールが自動的に反映されます（選手名・種目は各試合のデータがそのまま使われます）。'));
+  wrap.appendChild(rulesSection);
+
   // --- 共有 ---
   var shareSection = el('div',{className:'settings-section'});
   shareSection.appendChild(el('div',{className:'settings-section-title'},'共有'));
