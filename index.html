@@ -49,6 +49,26 @@ input:focus,textarea:focus{outline:none}
 .btn-danger{background:var(--accent);color:white;padding:11px 18px;font-size:14px}
 .btn:disabled{opacity:.4;cursor:default}
 
+/* 設定画面：洗練されたリスト風の行 */
+.settings-section{margin:18px 18px 0}
+.settings-section-title{font-size:11px;color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;padding:0 4px}
+.settings-list{background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04);border:1px solid var(--rule)}
+.settings-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--rule)}
+.settings-row:last-child{border-bottom:none}
+.settings-row-label{font-size:14px;color:var(--ink);font-weight:400}
+.settings-row-sub{font-size:11px;color:var(--ink3);margin-top:2px}
+.settings-row-action{flex-shrink:0}
+.pill-btn{border:none;background:#f1f0ed;color:var(--ink);font-size:12.5px;padding:8px 14px;border-radius:999px;letter-spacing:.02em;transition:background .12s;cursor:pointer}
+.pill-btn:active{background:#e2e0da}
+.pill-btn.pill-dark{background:var(--ink);color:#fff}
+.pill-btn.pill-dark:active{background:#333}
+.pill-btn.pill-danger{background:#fdeae4;color:var(--accent)}
+.pill-btn.pill-danger:active{background:#fadad0}
+.settings-inp{border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-size:13px;font-family:var(--mono);width:100%;background:#faf9f7}
+.court-link-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 16px;border-bottom:1px solid var(--rule)}
+.court-link-row:last-child{border-bottom:none}
+.court-link-no{font-family:var(--mono);font-size:13px;color:var(--ink2);min-width:60px}
+
 .csv-info{font-size:12px;color:var(--ink2);line-height:2;padding:12px;background:#f5f5f3;border-radius:4px}
 .csv-info b{color:var(--ink)}
 
@@ -1119,6 +1139,112 @@ function buildTournamentView(eventId, data, isAdmin){
   return wrap;
 }
 
+/* ══ 設定画面：共有・バドる連携リンク・エクスポート／インポート ══ */
+var DEFAULT_BADORU_URL = 'https://sasaki0369.github.io/badru/';
+
+function settingsRow(label, sub, actionEl){
+  var left = el('div',{},[
+    el('div',{className:'settings-row-label'},label),
+    sub ? el('div',{className:'settings-row-sub'},sub) : null
+  ]);
+  return el('div',{className:'settings-row'},[left, el('div',{className:'settings-row-action'},actionEl)]);
+}
+
+function buildSettingsView(eventId, data){
+  var wrap = el('div',{style:{paddingBottom:'24px'}});
+
+  // --- 共有 ---
+  var shareSection = el('div',{className:'settings-section'});
+  shareSection.appendChild(el('div',{className:'settings-section-title'},'共有'));
+  var shareList = el('div',{className:'settings-list'});
+  var shareBtn = el('button',{className:'pill-btn pill-dark'},'コピー');
+  shareBtn.onclick=function(){
+    var url=getBase()+'#view:'+eventId;
+    try{navigator.clipboard.writeText(url);}catch(e){}
+    shareBtn.textContent='✓ コピー済み';
+    setTimeout(function(){shareBtn.textContent='コピー';},1600);
+  };
+  shareList.appendChild(settingsRow('参加者向け共有リンク','進行状況を閲覧のみできるリンクです', shareBtn));
+  shareSection.appendChild(shareList);
+  wrap.appendChild(shareSection);
+
+  // --- バドる連携 ---
+  var badoruSection = el('div',{className:'settings-section'});
+  badoruSection.appendChild(el('div',{className:'settings-section-title'},'バドる連携'));
+  var badoruList = el('div',{className:'settings-list'});
+
+  var urlInp = el('input',{className:'settings-inp',value:data.badoruBaseUrl||DEFAULT_BADORU_URL});
+  urlInp.onchange=function(){
+    dbRef(eventId).child('badoruBaseUrl').set(urlInp.value.trim()||DEFAULT_BADORU_URL);
+  };
+  badoruList.appendChild(settingsRow('バドるのURL','各コートの連携リンクの生成元です', urlInp));
+  badoruSection.appendChild(badoruList);
+
+  var courtCount = data.courtCount||0;
+  var linksList = el('div',{className:'settings-list',style:{marginTop:'8px'}});
+  var baseUrl = (data.badoruBaseUrl||DEFAULT_BADORU_URL).replace(/\/?$/, '/');
+  for(var i=1;i<=courtCount;i++){
+    (function(courtNo){
+      var link = baseUrl + '?taikaEvent=' + encodeURIComponent(eventId) + '&court=' + courtNo;
+      var copyBtn = el('button',{className:'pill-btn'},'コピー');
+      copyBtn.onclick=function(){
+        try{navigator.clipboard.writeText(link);}catch(e){}
+        copyBtn.textContent='✓';
+        setTimeout(function(){copyBtn.textContent='コピー';},1400);
+      };
+      linksList.appendChild(el('div',{className:'court-link-row'},[
+        el('span',{className:'court-link-no'},'コート '+courtNo),
+        copyBtn
+      ]));
+    })(i);
+  }
+  if(courtCount===0){
+    linksList.appendChild(el('div',{style:{padding:'14px 16px',color:'var(--ink3)',fontSize:13}},'コート数が設定されていません。'));
+  }
+  badoruSection.appendChild(el('div',{className:'settings-row-sub',style:{margin:'10px 4px 4px'}},'各コートのタブレットでリンクを1回開くと、そのコート専用として自動的に連携されます。'));
+  badoruSection.appendChild(linksList);
+  wrap.appendChild(badoruSection);
+
+  // --- 進行状況 ---
+  var dataSection = el('div',{className:'settings-section'});
+  dataSection.appendChild(el('div',{className:'settings-section-title'},'進行状況'));
+  var dataList = el('div',{className:'settings-list'});
+
+  var exportBtn = el('button',{className:'pill-btn'},'エクスポート');
+  exportBtn.onclick=function(){
+    var csv = exportProgressCsv(data);
+    downloadTextFile((data.eventName||'大会')+'_進行状況.csv', csv);
+  };
+  dataList.appendChild(settingsRow('進行状況をエクスポート','リーグ・ブラケット・キュー・コートをCSVに書き出します', exportBtn));
+
+  var importInp = el('input',{type:'file',accept:'.csv',style:{display:'none'}});
+  var importBtn = el('button',{className:'pill-btn pill-danger'},'インポート');
+  importBtn.onclick=function(){ importInp.click(); };
+  importInp.onchange=function(){
+    var f = importInp.files[0];
+    if(!f) return;
+    var reader = new FileReader();
+    reader.onload=function(e){
+      var text;
+      try{ text = new TextDecoder('utf-8',{fatal:true}).decode(e.target.result); }
+      catch(err){ text = new TextDecoder('utf-8',{fatal:false}).decode(e.target.result); }
+      var imported = parseProgressCsv(text);
+      if(!confirm('現在の大会の「リーグ・ブラケット・キュー・コート」をインポート内容で置き換えます。よろしいですか？')) return;
+      dbRef(eventId).update({ leagues:imported.leagues, brackets:imported.brackets, queue:imported.queue, courts:imported.courts })
+        .then(function(){ alert('インポートしました。'); })
+        .catch(function(e){ alert('失敗しました: '+e.message); });
+    };
+    reader.readAsArrayBuffer(f);
+  };
+  dataList.appendChild(settingsRow('進行状況をインポート','CSVから大会の状態を復元します（現在の内容を置き換えます）', importBtn));
+  dataList.appendChild(importInp);
+
+  dataSection.appendChild(dataList);
+  wrap.appendChild(dataSection);
+
+  return wrap;
+}
+
 function mountProgress(eventId,data,role){
   var isAdmin=role==='admin';
   var root=el('div',{style:{minHeight:'100vh'}});
@@ -1134,48 +1260,17 @@ function mountProgress(eventId,data,role){
   tabCourts.onclick=function(){ activeTab='courts'; mountProgress(eventId,data,role); };
   tabTournament.onclick=function(){ activeTab='tournament'; mountProgress(eventId,data,role); };
   tabs.appendChild(tabCourts); tabs.appendChild(tabTournament);
+  if(isAdmin){
+    var tabSettings = el('button',{className:'tab-btn'+(activeTab==='settings'?' active':'')},'設定');
+    tabSettings.onclick=function(){ activeTab='settings'; mountProgress(eventId,data,role); };
+    tabs.appendChild(tabSettings);
+  }
   root.appendChild(tabs);
 
-  if(isAdmin){
-    var ctrlRow=el('div',{style:{display:'flex',gap:8,padding:'12px 18px',borderBottom:'1px solid var(--rule)',flexWrap:'wrap'}});
-    var shareBtn=el('button',{className:'btn btn-outline'},'共有リンクをコピー');
-    shareBtn.onclick=function(){
-      var url=getBase()+'#view:'+eventId;
-      try{navigator.clipboard.writeText(url);}catch(e){}
-      shareBtn.textContent='✓ コピーしました';
-      setTimeout(function(){shareBtn.textContent='共有リンクをコピー';},1800);
-    };
-    ctrlRow.appendChild(shareBtn);
-
-    var exportBtn=el('button',{className:'btn btn-outline'},'進行状況をエクスポート');
-    exportBtn.onclick=function(){
-      var csv = exportProgressCsv(data);
-      downloadTextFile((data.eventName||'大会')+'_進行状況.csv', csv);
-    };
-    ctrlRow.appendChild(exportBtn);
-
-    var importInp=el('input',{type:'file',accept:'.csv',style:{display:'none'}});
-    var importBtn=el('button',{className:'btn btn-outline'},'進行状況をインポート');
-    importBtn.onclick=function(){ importInp.click(); };
-    importInp.onchange=function(){
-      var f = importInp.files[0];
-      if(!f) return;
-      var reader = new FileReader();
-      reader.onload=function(e){
-        var text;
-        try{ text = new TextDecoder('utf-8',{fatal:true}).decode(e.target.result); }
-        catch(err){ text = new TextDecoder('utf-8',{fatal:false}).decode(e.target.result); }
-        var imported = parseProgressCsv(text);
-        if(!confirm('現在の大会の「リーグ・ブラケット・キュー・コート」をインポート内容で置き換えます。よろしいですか？')) return;
-        dbRef(eventId).update({ leagues:imported.leagues, brackets:imported.brackets, queue:imported.queue, courts:imported.courts })
-          .then(function(){ alert('インポートしました。'); })
-          .catch(function(e){ alert('失敗しました: '+e.message); });
-      };
-      reader.readAsArrayBuffer(f);
-    };
-    ctrlRow.appendChild(importBtn); ctrlRow.appendChild(importInp);
-
-    root.appendChild(ctrlRow);
+  if(activeTab==='settings' && isAdmin){
+    root.appendChild(buildSettingsView(eventId, data));
+    render(root);
+    return;
   }
 
   if(activeTab==='tournament'){
