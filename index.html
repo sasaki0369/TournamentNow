@@ -787,6 +787,10 @@ extraStyle.textContent = [
   'table.standing td.name-cell{text-align:left}',
   'table.standing td.mark-o{color:#2a7d2a;font-weight:700}',
   'table.standing td.mark-x{color:var(--accent)}',
+  'table.standing td.mark-live{color:var(--accent);font-family:var(--mono);font-size:10.5px;white-space:nowrap}',
+  '.live-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:3px;animation:liveBlink 1.2s infinite}',
+  '@keyframes liveBlink{0%,100%{opacity:1}50%{opacity:.3}}',
+  '.live-legend{font-size:11px;color:var(--ink3);margin-top:6px;display:flex;align-items:center}',
   '.tie-warn{background:#fff3e0;color:#a15c00;font-size:12px;padding:8px 10px;border-radius:4px;margin-top:8px}',
   '.bracket-round{margin-bottom:10px}',
   '.bracket-round-label{font-size:11px;color:var(--ink3);margin-bottom:4px;letter-spacing:.06em}',
@@ -810,7 +814,7 @@ function participantMatchResult(league, i, j){
   return m;
 }
 
-function buildLeagueCard(eventId, league, isAdmin, refreshFn){
+function buildLeagueCard(eventId, data, league, isAdmin, refreshFn){
   var card = el('div',{className:'league-card'});
   card.appendChild(el('h3',{},league.name));
   var n = league.participants.length;
@@ -827,13 +831,24 @@ function buildLeagueCard(eventId, league, isAdmin, refreshFn){
   var statByIdx = {};
   (st.stats||st.ranking||[]).forEach(function(s){ statByIdx[s.idx]=s; });
 
+  var anyLive = false;
   for(var i=0;i<n;i++){
     var tr = el('tr');
     tr.appendChild(el('td',{className:'name-cell'},teamLabel(league.participants[i])));
     for(var j=0;j<n;j++){
       if(i===j){ tr.appendChild(el('td',{},'')); continue; }
       var m = participantMatchResult(league, i, j);
-      if(!m || !m.result){ tr.appendChild(el('td',{},'')); continue; }
+      if(!m){ tr.appendChild(el('td',{},'')); continue; }
+      if(!m.result){
+        var courtNo = findCourtFor(data, 'league', league.id, m.id);
+        if(courtNo){
+          anyLive = true;
+          tr.appendChild(el('td',{className:'mark-live'},[el('span',{className:'live-dot'}), 'C'+courtNo]));
+        }else{
+          tr.appendChild(el('td',{},''));
+        }
+        continue;
+      }
       var iWon = (m.i===i && m.result.winner==='A') || (m.j===i && m.result.winner==='B');
       tr.appendChild(el('td',{className: iWon?'mark-o':'mark-x'}, iWon?'○':'×'));
     }
@@ -843,6 +858,9 @@ function buildLeagueCard(eventId, league, isAdmin, refreshFn){
     table.appendChild(tr);
   }
   card.appendChild(table);
+  if(anyLive){
+    card.appendChild(el('div',{className:'live-legend'},[el('span',{className:'live-dot'}),' 進行中（コート番号を表示）']));
+  }
 
   if(st.needsManualTiebreak && isAdmin){
     var warn = el('div',{className:'tie-warn'},'同率のため順位を手動で確定してください（勝敗・ゲーム率・ポイント率すべて同じ相手がいます）。下の欄に順位順で番号をカンマ区切りで入力してください（例: 2,0,1）。');
@@ -1121,7 +1139,7 @@ function buildTournamentView(eventId, data, isAdmin){
     wrap.appendChild(el('div',{style:{padding:'10px 18px',color:'var(--ink3)',fontSize:13}},'まだリーグがありません。'));
   }
   Object.keys(leagues).forEach(function(lid){
-    wrap.appendChild(buildLeagueCard(eventId, leagues[lid], isAdmin, refresh));
+    wrap.appendChild(buildLeagueCard(eventId, data, leagues[lid], isAdmin, refresh));
   });
 
   wrap.appendChild(el('div',{className:'section-label'},'決勝トーナメント'));
