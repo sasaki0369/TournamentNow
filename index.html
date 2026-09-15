@@ -511,7 +511,7 @@ function computeDispatch(data){
    同時に複数の管理端末が開いていても安全なようtransactionで適用 */
 function watchAndDispatch(eventId){
   var ref=dbRef(eventId);
-  ref.on('value',function(snap){
+  var h=ref.on('value',function(snap){
     var data=snap.val();
     if(!data)return;
     var next=computeDispatch(data);
@@ -522,6 +522,7 @@ function watchAndDispatch(eventId){
       });
     }
   });
+  _listeners.push({ref:ref,h:h});
 }
 
 
@@ -909,7 +910,10 @@ extraStyle.textContent = [
   '.tab-btn{flex:1;padding:11px 0;font-size:13px;color:var(--ink3);background:none;border:none;border-bottom:2px solid transparent}',
   '.tab-btn.active{color:var(--ink);border-bottom-color:var(--ink);font-weight:700}',
   '.league-card{background:#fff;border:1px solid var(--rule);border-radius:8px;margin:10px 18px;padding:12px 14px}',
-  '.league-card h3{font-size:13px;margin-bottom:8px}',
+  '.league-card.dragging{opacity:.5;box-shadow:0 4px 16px rgba(0,0,0,.15)}',
+  '.drag-handle{display:inline-block;cursor:grab;color:var(--ink3);font-size:16px;margin-right:8px;padding:2px 6px;touch-action:none;user-select:none}',
+  '.league-list{position:relative}',
+  '.league-card h3{font-size:13px;margin-bottom:8px;display:flex;align-items:center}',
   'table.standing{width:100%;border-collapse:collapse;font-size:12px}',
   'table.standing th,table.standing td{border:1px solid var(--rule);padding:5px 6px;text-align:center}',
   'table.standing td.name-cell{text-align:left}',
@@ -1113,6 +1117,58 @@ function buildLeaguesFromGroups(data, groupNames){
   return { leagues:leagues, queue:queue, courts:courts };
 }
 
+/* リーグ表示順：カスタム順(leagueOrder)があればそれを優先し、
+   新しく増えたリーグや順序未設定時はリーグ名のアルファベット順にする */
+function orderedLeagueIds(data){
+  var leagues = data.leagues || {};
+  var ids = Object.keys(leagues);
+  function alpha(a,b){ return leagues[a].name.localeCompare(leagues[b].name, 'ja'); }
+  var customOrder = data.leagueOrder;
+  if(customOrder && Array.isArray(customOrder) && customOrder.length>0){
+    var known = {};
+    var ordered = customOrder.filter(function(id){ if(leagues[id]){ known[id]=true; return true; } return false; });
+    var rest = ids.filter(function(id){ return !known[id]; }).sort(alpha);
+    return ordered.concat(rest);
+  }
+  return ids.sort(alpha);
+}
+
+/* ドラッグでの並べ替え（Pointer Eventsでマウス/タッチ両対応） */
+function makeReorderable(container, itemSelector, getId, onDone){
+  container.querySelectorAll('.drag-handle').forEach(function(handle){
+    handle.addEventListener('pointerdown', function(e){
+      e.preventDefault();
+      var item = handle.closest(itemSelector);
+      if(!item) return;
+      var dragging = item;
+      dragging.classList.add('dragging');
+      try{ handle.setPointerCapture(e.pointerId); }catch(err){}
+
+      function onMove(ev){
+        var items = Array.prototype.slice.call(container.querySelectorAll(itemSelector));
+        var y = ev.clientY;
+        for(var i=0;i<items.length;i++){
+          if(items[i]===dragging) continue;
+          var rect = items[i].getBoundingClientRect();
+          var mid = rect.top + rect.height/2;
+          if(y < mid){ container.insertBefore(dragging, items[i]); return; }
+        }
+        container.appendChild(dragging);
+      }
+      function onUp(ev){
+        try{ handle.releasePointerCapture(e.pointerId); }catch(err){}
+        dragging.classList.remove('dragging');
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        var order = Array.prototype.slice.call(container.querySelectorAll(itemSelector)).map(getId);
+        onDone(order);
+      }
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+    });
+  });
+}
+
 function buildTournamentView(eventId, data, isAdmin){
   var wrap = el('div');
   var leagues = data.leagues || {};
@@ -1150,12 +1206,29 @@ function buildTournamentView(eventId, data, isAdmin){
       wrap.appendChild(autoBox);
     }
   }
-  if(Object.keys(leagues).length===0){
+  var leagueIds = orderedLeagueIds(data);
+  if(leagueIds.length===0){
     wrap.appendChild(el('div',{style:{padding:'10px 18px',color:'var(--ink3)',fontSize:13}},'まだリーグがありません。'));
+  }else if(isAdmin){
+    wrap.appendChild(el('div',{style:{padding:'0 18px 6px',fontSize:11,color:'var(--ink3)'}},'⠿ を掴んでドラッグすると表示順を変更できます。'));
   }
-  Object.keys(leagues).forEach(function(lid){
-    wrap.appendChild(buildLeagueCard(eventId, data, leagues[lid], isAdmin, refresh));
+  var leagueList = el('div',{className:'league-list'});
+  leagueIds.forEach(function(lid){
+    var card = buildLeagueCard(eventId, data, leagues[lid], isAdmin, refresh);
+    card.setAttribute('data-league-id', lid);
+    if(isAdmin){
+      var handle = el('span',{className:'drag-handle'},'⠿');
+      var h3 = card.querySelector('h3');
+      h3.insertBefore(handle, h3.firstChild);
+    }
+    leagueList.appendChild(card);
   });
+  wrap.appendChild(leagueList);
+  if(isAdmin && leagueIds.length>1){
+    makeReorderable(leagueList, '.league-card', function(cardEl){ return cardEl.getAttribute('data-league-id'); }, function(order){
+      dbRef(eventId).child('leagueOrder').set(order);
+    });
+  }
 
   wrap.appendChild(el('div',{className:'section-label'},'決勝トーナメント'));
   if(Object.keys(brackets).length===0){
@@ -1204,6 +1277,16 @@ function settingsRow(label, sub, actionEl){
 
 function buildSettingsView(eventId, data){
   var wrap = el('div',{style:{paddingBottom:'24px'}});
+
+  // --- 大会 ---
+  var navSection = el('div',{className:'settings-section'});
+  navSection.appendChild(el('div',{className:'settings-section-title'},'大会'));
+  var navList = el('div',{className:'settings-list'});
+  var backBtn = el('button',{className:'pill-btn'},'一覧へ');
+  backBtn.onclick=function(){ location.hash=''; };
+  navList.appendChild(settingsRow('大会一覧・新規作成に戻る','試合を進めながらでも、いつでもこの大会に戻ってこられます', backBtn));
+  navSection.appendChild(navList);
+  wrap.appendChild(navSection);
 
   // --- 試合ルール（バドる連携時に自動反映） ---
   var rulesSection = el('div',{className:'settings-section'});
@@ -1363,6 +1446,23 @@ function buildSettingsView(eventId, data){
   };
   dataList.appendChild(settingsRow('試合キューCSVを追加で取り込む','現在の内容に追加します（決勝トーナメントの後から追加にも使えます）', addCsvBtn));
   dataList.appendChild(addCsvInp);
+
+  var overwriteCsvInp = el('input',{type:'file',accept:'.csv',style:{display:'none'}});
+  var overwriteCsvBtn = el('button',{className:'pill-btn pill-danger'},'上書き');
+  overwriteCsvBtn.onclick=function(){ overwriteCsvInp.click(); };
+  overwriteCsvInp.onchange=function(){
+    var f = overwriteCsvInp.files[0];
+    if(!f) return;
+    readCsvFile(f, function(text){
+      var parsed = csvParseMatchesAndBrackets(text);
+      if(!confirm('現在のリーグ・決勝トーナメント・キュー・コート状況をすべて削除し、このCSVの内容で置き換えます。よろしいですか？')) return;
+      dbRef(eventId).update({ leagues:null, brackets:parsed.brackets, queue:parsed.queue, courts:null, leagueOrder:null })
+        .then(function(){ alert('上書きしました（'+parsed.queue.length+'件の試合、'+Object.keys(parsed.brackets).length+'件の決勝トーナメント）。'); })
+        .catch(function(e){ alert('失敗しました: '+e.message); });
+    });
+  };
+  dataList.appendChild(settingsRow('試合キューCSVで上書きする','現在の内容をすべて削除して、このCSVで最初からやり直します', overwriteCsvBtn));
+  dataList.appendChild(overwriteCsvInp);
 
   dataSection.appendChild(dataList);
   wrap.appendChild(dataSection);
