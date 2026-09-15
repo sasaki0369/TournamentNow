@@ -390,29 +390,42 @@ function applyPendingResults(data){
   var leagues = Object.assign({}, data.leagues||{});
   var brackets = Object.assign({}, data.brackets||{});
   var newCourts = Object.assign({}, courts);
+  var queue = toArray(data.queue).slice();
   var changed = false;
 
   Object.keys(courts).forEach(function(key){
     var c = courts[key];
     if(!c || !c.lastResult || c.lastResult.applied) return;
     var r = c.lastResult;
+    var isDecisive = r.status === 'finished' && (r.winner==='A' || r.winner==='B');
+
     if(r.refType==='league' && leagues[r.refId]){
       var lg = Object.assign({}, leagues[r.refId]);
       var matches = toArray(lg.matches).map(function(m,idx){
         if(idx !== r.refMatchIndex) return m;
-        return Object.assign({}, m, { result:{ winner:r.winner, gameWinsA:r.gameWinsA, gameWinsB:r.gameWinsB, pointsA:r.pointsA, pointsB:r.pointsB } });
+        if(!isDecisive) return m; // 中止された試合は結果を記録せず、再戦できるようキューへ戻す
+        return Object.assign({}, m, { result:{ winner:r.winner, gameWinsA:r.gameWinsA, gameWinsB:r.gameWinsB, pointsA:r.pointsA, pointsB:r.pointsB, retired: !!r.retired, retiredSide: r.retiredSide||null } });
       });
       lg.matches = matches;
       leagues[r.refId] = lg;
+      if(!isDecisive && r.teamA && r.teamB){
+        queue.push({ id:uid(), time:'', matchCode: lg.name+'-'+(r.refMatchIndex+1), matchType: lg.type||'singles',
+          teamA:r.teamA, teamB:r.teamB, refType:'league', refId:r.refId, refMatchIndex:r.refMatchIndex });
+      }
       changed = true;
     }
     if(r.refType==='bracket' && brackets[r.refId]){
       var br = Object.assign({}, brackets[r.refId]);
       br.matches = toArray(br.matches).map(function(m){
         if(m.id !== r.refMatchIndex) return m;
-        return Object.assign({}, m, { result:{ winner:r.winner, gameWinsA:r.gameWinsA, gameWinsB:r.gameWinsB, pointsA:r.pointsA, pointsB:r.pointsB } });
+        if(!isDecisive) return m;
+        return Object.assign({}, m, { result:{ winner:r.winner, gameWinsA:r.gameWinsA, gameWinsB:r.gameWinsB, pointsA:r.pointsA, pointsB:r.pointsB, retired: !!r.retired, retiredSide: r.retiredSide||null } });
       });
       brackets[r.refId] = br;
+      if(!isDecisive && r.teamA && r.teamB){
+        queue.push({ id:uid(), time:'', matchCode: br.name+'-'+r.refMatchIndex, matchType: (r.teamA.length>1||r.teamB.length>1)?'doubles':'singles',
+          teamA:r.teamA, teamB:r.teamB, refType:'bracket', refId:r.refId, refMatchIndex:r.refMatchIndex });
+      }
       changed = true;
     }
     if(r.refType==='league' || r.refType==='bracket'){
@@ -421,7 +434,7 @@ function applyPendingResults(data){
   });
 
   if(!changed) return data;
-  return Object.assign({}, data, { leagues:leagues, brackets:brackets, courts:newCourts });
+  return Object.assign({}, data, { leagues:leagues, brackets:brackets, courts:newCourts, queue:queue });
 }
 
 /* ══ ②ブラケットのスロットが揃った試合をキューへ投入 ══ */
@@ -919,6 +932,7 @@ extraStyle.textContent = [
   'table.standing td.name-cell{text-align:left}',
   'table.standing td.mark-o{color:#2a7d2a;font-weight:700}',
   'table.standing td.mark-x{color:var(--accent)}',
+  'table.standing td.mark-retired{color:var(--accent);font-size:11px;font-weight:700;background:#fdeae4}',
   'table.standing td.mark-live{color:var(--accent);font-family:var(--mono);font-size:10.5px;white-space:nowrap}',
   '.live-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:3px;animation:liveBlink 1.2s infinite}',
   '@keyframes liveBlink{0%,100%{opacity:1}50%{opacity:.3}}',
@@ -982,7 +996,12 @@ function buildLeagueCard(eventId, data, league, isAdmin, refreshFn){
         continue;
       }
       var iWon = (m.i===i && m.result.winner==='A') || (m.j===i && m.result.winner==='B');
-      tr.appendChild(el('td',{className: iWon?'mark-o':'mark-x'}, iWon?'○':'×'));
+      if(m.result.retired){
+        var iRetired = (m.i===i && m.result.retiredSide==='A') || (m.j===i && m.result.retiredSide==='B');
+        tr.appendChild(el('td',{className: iRetired?'mark-retired':(iWon?'mark-o':'mark-x')}, iRetired?'棄権':(iWon?'○':'×')));
+      }else{
+        tr.appendChild(el('td',{className: iWon?'mark-o':'mark-x'}, iWon?'○':'×'));
+      }
     }
     var s = statByIdx[i];
     tr.appendChild(el('td',{}, s ? (s.wins+'-'+s.losses) : ''));
@@ -1045,7 +1064,7 @@ function buildBracketCard(data, bracket){
       var bEl = el('span',{className: (!m.teamB?'pending':(m.result && m.result.winner==='B'?'winner':''))}, bLabel);
       row.appendChild(aEl); row.appendChild(el('span',{},'vs')); row.appendChild(bEl);
       if(m.result){
-        row.appendChild(el('span',{className:'score'}, m.result.gameWinsA+'-'+m.result.gameWinsB));
+        row.appendChild(el('span',{className:'score'}, m.result.retired ? '棄権' : (m.result.gameWinsA+'-'+m.result.gameWinsB)));
       }
       roundWrap.appendChild(row);
     });
@@ -1293,8 +1312,18 @@ function buildSettingsView(eventId, data){
   rulesSection.appendChild(el('div',{className:'settings-section-title'},'試合ルール'));
   var rules = Object.assign({ format:'best3', points:15, deuce:true, deuceMax:21 }, data.matchRules||{});
 
+  var rulesErr = el('div',{className:'err',style:{marginTop:'4px'}});
   function saveRules(patch){
     var next = Object.assign({}, rules, patch);
+    if(next.deuce && next.deuceMax <= next.points){
+      // セッティング最大点は目標点より大きくなければならない（バドる側のバリデーションと矛盾しないように、
+      // ここで弾いて全コートが開始不能になる事態を防ぐ）
+      next.deuceMax = next.points + (next.points===15 ? 6 : 9);
+      rulesErr.textContent = 'セッティング最大点は得点(' + next.points + '点)より大きい値が必要なため、' + next.deuceMax + '点に自動調整しました。';
+    }else{
+      rulesErr.textContent = '';
+    }
+    rules = next;
     dbRef(eventId).child('matchRules').set(next);
   }
 
@@ -1334,6 +1363,7 @@ function buildSettingsView(eventId, data){
     rulesCard.appendChild(deuceMaxRow);
   }
 
+  rulesCard.appendChild(rulesErr);
   rulesSection.appendChild(rulesCard);
   rulesSection.appendChild(el('div',{className:'settings-row-sub',style:{margin:'8px 4px 0'}},
     '連携中のバドるには、試合開始時にこのルールが自動的に反映されます（選手名・種目は各試合のデータがそのまま使われます）。'));
