@@ -456,19 +456,41 @@ function resolveBracketsIntoQueue(data){
 }
 
 /* ══ ③空きコートへキュー先頭を割当（従来ロジック） ══ */
+/* 既に他コートで「配信済み・進行中」の選手名一覧を集める（同時出場の重複防止用） */
+function playingTeamNames(courts){
+  var playing = {};
+  Object.keys(courts||{}).forEach(function(cno){
+    var c = courts[cno];
+    if(c && c.match && (c.status==='assigned' || c.status==='live')){
+      toArray(c.match.teamA).concat(toArray(c.match.teamB)).forEach(function(n){ if(n) playing[n]=true; });
+    }
+  });
+  return playing;
+}
+
 function assignIdleCourts(data){
   var courtCount=data.courtCount||0;
   var queue=toArray(data.queue).slice();
   var courts=Object.assign({},data.courts||{});
   var changed=false;
+  var playing = playingTeamNames(courts);
   for(var i=1;i<=courtCount;i++){
     var key=String(i);
     var court=courts[key]||{status:'idle',match:null,live:null,lastResult:null};
-    if(court.status==='idle'&&queue.length>0){
-      var next=queue.shift();
-      courts[key]=Object.assign({},court,{status:'assigned',match:next,live:null,assignedAt:Date.now()});
-      changed=true;
+    if(court.status!=='idle' || queue.length===0) continue;
+    // キューの先頭から順に、出場者が誰も他コートと重複しない最初の試合を探す
+    // （同じ時間帯に同じ選手が複数コートで同時に試合することを防ぐ）
+    var pickIdx = -1;
+    for(var qi=0; qi<queue.length; qi++){
+      var names = toArray(queue[qi].teamA).concat(toArray(queue[qi].teamB));
+      var conflict = names.some(function(n){ return n && playing[n]; });
+      if(!conflict){ pickIdx = qi; break; }
     }
+    if(pickIdx === -1) continue; // 割り当てられる試合が無い（残り全て出場者が重複）
+    var next = queue.splice(pickIdx,1)[0];
+    courts[key]=Object.assign({},court,{status:'assigned',match:next,live:null,assignedAt:Date.now()});
+    changed=true;
+    toArray(next.teamA).concat(toArray(next.teamB)).forEach(function(n){ if(n) playing[n]=true; });
   }
   if(!changed)return data;
   return Object.assign({},data,{queue:queue,courts:courts});
