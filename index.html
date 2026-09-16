@@ -1373,14 +1373,16 @@ function buildSettingsView(eventId, data){
   var shareSection = el('div',{className:'settings-section'});
   shareSection.appendChild(el('div',{className:'settings-section-title'},'共有'));
   var shareList = el('div',{className:'settings-list'});
+  var shareUrl = getBase()+'#view:'+eventId;
   var shareBtn = el('button',{className:'pill-btn pill-dark'},'コピー');
   shareBtn.onclick=function(){
-    var url=getBase()+'#view:'+eventId;
-    try{navigator.clipboard.writeText(url);}catch(e){}
+    try{navigator.clipboard.writeText(shareUrl);}catch(e){}
     shareBtn.textContent='✓ コピー済み';
     setTimeout(function(){shareBtn.textContent='コピー';},1600);
   };
-  shareList.appendChild(settingsRow('参加者向け共有リンク','進行状況を閲覧のみできるリンクです', shareBtn));
+  var shareQrBtn = el('button',{className:'pill-btn'},'QR');
+  shareQrBtn.onclick=function(){ showQrModal('参加者向け共有リンク', shareUrl); };
+  shareList.appendChild(settingsRow('参加者向け共有リンク','進行状況を閲覧のみできるリンクです', el('div',{style:{display:'flex',gap:'6px'}},[shareQrBtn, shareBtn])));
   shareSection.appendChild(shareList);
   wrap.appendChild(shareSection);
 
@@ -1543,9 +1545,22 @@ function mountProgress(eventId,data,role){
   root.appendChild(grid);
 
   var queue=toArray(data.queue);
-  root.appendChild(el('div',{className:'section-label'},'キュー待ち（残り'+queue.length+'件）'));
+  function timeToMinutes(t){
+    if(!t) return null;
+    var m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+    if(!m) return null;
+    return parseInt(m[1],10)*60 + parseInt(m[2],10);
+  }
+  var queueSorted=queue.slice().sort(function(a,b){
+    var ma=timeToMinutes(a.time), mb=timeToMinutes(b.time);
+    if(ma===null && mb===null) return 0;
+    if(ma===null) return 1; // 時刻未設定・解釈できないものは末尾へ
+    if(mb===null) return -1;
+    return ma-mb;
+  });
+  root.appendChild(el('div',{className:'section-label'},'キュー待ち（残り'+queue.length+'件・予測時刻の早い順）'));
   var queueWrap=el('div');
-  queue.slice(0,10).forEach(function(m,idx){
+  queueSorted.slice(0,10).forEach(function(m,idx){
     queueWrap.appendChild(el('div',{className:'queue-row'},[
       el('span',{className:'queue-idx'},String(idx+1)),
       el('span',{className:'queue-teams'},teamLabel(m.teamA)+' vs '+teamLabel(m.teamB)),
