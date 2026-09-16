@@ -38,6 +38,7 @@ input:focus,textarea:focus{outline:none}
 
 .appbar{background:var(--ink);color:white;padding:13px 18px;font-size:15px;font-weight:300;letter-spacing:.05em;flex-shrink:0;position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between}
 .appbar-title{font-size:15px;font-weight:400;color:rgba(255,255,255,.7);letter-spacing:.04em}
+.appbar-help-btn{width:26px;height:26px;border-radius:50%;background:rgba(255,255,255,.12);color:#fff;border:none;font-size:13px;font-weight:700;flex-shrink:0}
 .appbar-right{font-family:var(--mono);font-size:15px;color:rgba(255,255,255,.45);letter-spacing:.04em}
 
 .content{flex:1;overflow-y:auto}
@@ -88,6 +89,15 @@ input:focus,textarea:focus{outline:none}
 .qr-modal-box svg{display:block;width:200px;height:200px}
 .qr-modal-url{font-family:var(--mono);font-size:10.5px;color:var(--ink3);word-break:break-all;margin-top:14px;line-height:1.6}
 .qr-modal-close{margin-top:16px;width:100%}
+.help-modal{max-width:520px;max-height:85vh;display:flex;flex-direction:column;text-align:left}
+.help-body{overflow-y:auto;flex:1;padding-right:4px}
+.help-section{margin-bottom:16px}
+.help-section-title{font-size:14px;font-weight:700;margin-bottom:6px;color:var(--ink)}
+.help-lead{font-size:12.5px;color:var(--ink2);margin-bottom:6px}
+.help-list{margin:0;padding-left:18px}
+.help-list li{font-size:12.5px;color:var(--ink2);line-height:1.7;margin-bottom:4px}
+.help-list code{font-family:var(--mono);background:#f1f0ed;padding:1px 5px;border-radius:4px;font-size:11.5px}
+.help-list b{color:var(--ink)}
 
 .csv-info{font-size:12px;color:var(--ink2);line-height:2;padding:12px;background:#f5f5f3;border-radius:4px}
 .csv-info b{color:var(--ink)}
@@ -895,7 +905,9 @@ function mountSetup(){
   if(pastWrap)wrap.appendChild(pastWrap);
 
   var root=el('div',{style:{minHeight:'100vh'}});
-  root.appendChild(el('div',{className:'appbar'},[el('span',{className:'appbar-title'},'大会Now')]));
+  var setupHelpBtn = el('button',{className:'appbar-help-btn'},'?');
+  setupHelpBtn.onclick = showHelpModal;
+  root.appendChild(el('div',{className:'appbar'},[el('span',{className:'appbar-title'},'大会Now'), setupHelpBtn]));
   root.appendChild(wrap);
   render(root);
 }
@@ -1276,6 +1288,68 @@ function buildTournamentView(eventId, data, isAdmin){
 
 /* ══ 設定画面：共有・バドる連携リンク・エクスポート／インポート ══ */
 var DEFAULT_BADORU_URL = 'https://sasaki0369.github.io/badru/';
+
+function showHelpModal(){
+  var bg = el('div',{className:'qr-modal-bg'});
+  var modal = el('div',{className:'qr-modal help-modal'});
+  modal.appendChild(el('div',{className:'qr-modal-title'},'大会Now の使い方'));
+
+  var body = el('div',{className:'help-body'});
+  body.innerHTML = [
+    section('① 試合の読み込み方','',[
+      '「新しい大会を作成」画面で、以下の列を持つCSVを読み込みます。',
+      '<code>時刻,試合コード,種目,選手A1,選手A2,選手B1,選手B2,ラウンド(任意)</code>',
+      '種目は「シングルス」または「ダブルス」。上から順に、空いたコートへ自動配信されます。'
+    ]),
+    section('② 決勝トーナメントの組み方','CSVの選手名欄に、以下の特殊な記法が使えます。',[
+      '<code>#league:リーグ名:順位</code> … 例）#league:A2-A:1 → 「A2-A」というリーグの1位',
+      '<code>#winner:試合番号</code> … 例）#winner:1 → 同じ試合コードのグループ内1番目の試合の勝者',
+      'これらを含む試合コードのグループ（例：AIIランク決勝T-1, -2, -3）は自動的に決勝トーナメントとして登録され、対戦相手が確定次第キューに入ります。'
+    ]),
+    section('③ コートへの自動配信','',[
+      '空いたコートへ、キューの上から順に配信されます。ただし「同じ選手が同時に別コートで試合しない」ことを最優先するため、記載の時刻通りに配信されるとは限りません。',
+      '決勝トーナメントは、参照しているリーグ・試合の結果が出た瞬間に自動でキューへ入ります。'
+    ]),
+    section('④「リーグ・トーナメント」タブ','',[
+      '<b>自動検出</b>：試合コードの末尾番号（例: A2-A-1〜A2-A-6）から、同じブロックの試合を自動でリーグ化できます。',
+      '<b>順位判定</b>：勝敗数→取得ゲーム率→取得ポイント率の順に判定。すべて同率の場合のみ本部が手動で順位を確定します。',
+      '<b>進行中表示</b>：まだ結果の出ていないマスのうち、実際にコートで進行中のものには点滅マークとコート番号が表示されます。',
+      '<b>並び替え</b>：既定ではリーグ名のアルファベット順。左上の「⠿」を掴んでドラッグすると自由に並べ替えられます。',
+      '<b>棄権</b>：棄権があった試合は、○×の代わりに赤字で「棄権」と表示されます。'
+    ]),
+    section('⑤「コート状況」タブ','',[
+      '<b>自分の試合を探す</b>：選手名の一部を入力すると、進行中／待ち順と予測時刻／結果、をまとめて確認できます。',
+      '<b>キュー待ちの予測時刻</b>：最初はCSV記載の予測時刻ですが、実際の試合結果が3件以上貯まると、そこからは実際の1試合あたりの所要時間を元にした動的な予測に自動的に切り替わります。'
+    ]),
+    section('⑥「設定」タブ','',[
+      '<b>試合ルール</b>：試合形式・得点・セッティング（デュース）を大会共通で設定。連携中のバドるに自動反映されます。',
+      '<b>共有</b>：参加者が進行状況を閲覧だけできるリンク（URL・QRコード）。',
+      '<b>バドる連携</b>：コートごとの連携リンク（URL・QRコード）。そのリンクをタブレットで一度開くだけで、大会ID・コート番号の入力なしに自動連携されます。',
+      '<b>進行状況</b>：現在の状態をCSVに書き出す「エクスポート」、そのCSVから復元する「インポート」、試合を追加で読み込む「追加で取り込む」、全部消してやり直す「上書きする」。',
+      '<b>大会一覧に戻る</b>：試合を進めながらでも、ここからいつでも他の大会や新規作成画面に移動できます。'
+    ]),
+    section('⑦ バドるとの連携でできること','',[
+      '配信された試合の選手名・種目が自動反映されます。',
+      '試合終了・棄権・中止の結果が自動的に大会Nowへ送られ、リーグ・ブラケットに反映されます。',
+      '盤面・設定画面に、そのタブレットが担当しているコート番号が表示されます。'
+    ])
+  ].join('');
+  modal.appendChild(body);
+
+  var closeBtn = el('button',{className:'btn btn-outline qr-modal-close'},'閉じる');
+  closeBtn.onclick=function(){ bg.remove(); };
+  modal.appendChild(closeBtn);
+  bg.onclick=function(e){ if(e.target===bg) bg.remove(); };
+  bg.appendChild(modal);
+  document.body.appendChild(bg);
+
+  function section(title, lead, lines){
+    var html = '<div class="help-section"><div class="help-section-title">'+title+'</div>';
+    if(lead) html += '<div class="help-lead">'+lead+'</div>';
+    html += '<ul class="help-list">' + lines.map(function(l){return '<li>'+l+'</li>';}).join('') + '</ul></div>';
+    return html;
+  }
+}
 
 function showQrModal(title, url){
   var bg = el('div',{className:'qr-modal-bg'});
@@ -1683,9 +1757,12 @@ function buildPlayerSearch(data){
 function mountProgress(eventId,data,role){
   var isAdmin=role==='admin';
   var root=el('div',{style:{minHeight:'100vh'}});
+  var helpBtn = el('button',{className:'appbar-help-btn'},'?');
+  helpBtn.onclick = showHelpModal;
   var appbar=el('div',{className:'appbar'},[
     el('span',{className:'appbar-title'},(data.eventName||'大会Now')),
-    isAdmin?null:el('span',{className:'viewer-chip'},'閲覧')
+    isAdmin?null:el('span',{className:'viewer-chip'},'閲覧'),
+    helpBtn
   ]);
   root.appendChild(appbar);
 
@@ -1736,7 +1813,7 @@ function mountProgress(eventId,data,role){
   var queueLabel = dynamicEstimates ? 'キュー待ち（残り'+queue.length+'件・実績ペースによる予測）' : 'キュー待ち（残り'+queue.length+'件・予測時刻の早い順）';
   root.appendChild(el('div',{className:'section-label'},queueLabel));
   var queueWrap=el('div');
-  queueSorted.slice(0,10).forEach(function(m,idx){
+  queueSorted.forEach(function(m,idx){
     var timeLabel = dynamicEstimates && dynamicEstimates[m.id] ? fmtHHMM(dynamicEstimates[m.id])+'頃' : (m.time||'');
     queueWrap.appendChild(el('div',{className:'queue-row'},[
       el('span',{className:'queue-idx'},String(idx+1)),
