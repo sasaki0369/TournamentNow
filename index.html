@@ -397,6 +397,7 @@ function applyPendingResults(data){
   var brackets = Object.assign({}, data.brackets||{});
   var newCourts = Object.assign({}, courts);
   var queue = toArray(data.queue).slice();
+  var durations = toArray(data.matchDurations).slice();
   var changed = false;
 
   Object.keys(courts).forEach(function(key){
@@ -404,6 +405,15 @@ function applyPendingResults(data){
     if(!c || !c.lastResult || c.lastResult.applied) return;
     var r = c.lastResult;
     var isDecisive = r.status === 'finished' && (r.winner==='A' || r.winner==='B');
+
+    // 実績ペース算出用：決着がついた試合の所要時間を記録する（リーグ／ブラケット／単発いずれも対象）
+    if(isDecisive && c.assignedAt && r.finishedAt){
+      var dur = r.finishedAt - c.assignedAt;
+      if(dur > 0 && dur < 3*60*60*1000){ // 3時間以上は異常値として除外
+        durations.push(dur);
+        if(durations.length > 30) durations = durations.slice(durations.length-30);
+      }
+    }
 
     if(r.refType==='league' && leagues[r.refId]){
       var lg = Object.assign({}, leagues[r.refId]);
@@ -418,7 +428,6 @@ function applyPendingResults(data){
         queue.push({ id:uid(), time:'', matchCode: lg.name+'-'+(r.refMatchIndex+1), matchType: lg.type||'singles',
           teamA:r.teamA, teamB:r.teamB, refType:'league', refId:r.refId, refMatchIndex:r.refMatchIndex });
       }
-      changed = true;
     }
     if(r.refType==='bracket' && brackets[r.refId]){
       var br = Object.assign({}, brackets[r.refId]);
@@ -432,15 +441,14 @@ function applyPendingResults(data){
         queue.push({ id:uid(), time:'', matchCode: br.name+'-'+r.refMatchIndex, matchType: (r.teamA.length>1||r.teamB.length>1)?'doubles':'singles',
           teamA:r.teamA, teamB:r.teamB, refType:'bracket', refId:r.refId, refMatchIndex:r.refMatchIndex });
       }
-      changed = true;
     }
-    if(r.refType==='league' || r.refType==='bracket'){
-      newCourts[key] = Object.assign({}, c, { lastResult: Object.assign({}, r, { applied:true }) });
-    }
+    // refTypeの有無に関わらず、処理済みマークを付ける（所要時間の重複計上・再処理を防ぐ）
+    newCourts[key] = Object.assign({}, c, { lastResult: Object.assign({}, r, { applied:true }) });
+    changed = true;
   });
 
   if(!changed) return data;
-  return Object.assign({}, data, { leagues:leagues, brackets:brackets, courts:newCourts, queue:queue });
+  return Object.assign({}, data, { leagues:leagues, brackets:brackets, courts:newCourts, queue:queue, matchDurations:durations });
 }
 
 /* ══ ②ブラケットのスロットが揃った試合をキューへ投入 ══ */
@@ -1508,6 +1516,51 @@ function buildSettingsView(eventId, data){
   return wrap;
 }
 
+/* ══ 実績ベースの所要時間・予測時刻 ══ */
+function avgMatchDurationMs(data){
+  var arr = toArray(data.matchDurations);
+  if(arr.length < 3) return null; // サンプルが少なすぎる間は使わない
+  var sum = arr.reduce(function(s,v){return s+v;}, 0);
+  return sum / arr.length;
+}
+
+function fmtHHMM(ts){
+  var d = new Date(ts);
+  var h = String(d.getHours()).padStart(2,'0');
+  var m = String(d.getMinutes()).padStart(2,'0');
+  return h+':'+m;
+}
+
+/* 各コートが次に空く見込み時刻から、キューの各試合の開始見込み時刻を「早く空くコートから順に」シミュレーションする。
+   実績データが3件未満の場合はnullを返し、呼び出し側でCSV記載の予測時刻にフォールバックする。 */
+function estimateQueueStartTimes(data, queueSortedList){
+  var avgDur = avgMatchDurationMs(data);
+  if(avgDur === null) return null;
+  var courtCount = data.courtCount || 0;
+  if(courtCount <= 0) return null;
+  var now = Date.now();
+  var courtFreeAt = [];
+  for(var i=1;i<=courtCount;i++){
+    var c = (data.courts||{})[String(i)];
+    if(c && c.match && (c.status==='live' || c.status==='assigned')){
+      var startedAt = c.assignedAt || now;
+      var elapsed = now - startedAt;
+      var remaining = Math.max(avgDur - elapsed, avgDur*0.15);
+      courtFreeAt.push(now + remaining);
+    }else{
+      courtFreeAt.push(now);
+    }
+  }
+  var map = {}; // queue item id -> 予測ミリ秒
+  queueSortedList.forEach(function(m){
+    var minIdx = 0;
+    for(var i=1;i<courtFreeAt.length;i++){ if(courtFreeAt[i] < courtFreeAt[minIdx]) minIdx = i; }
+    map[m.id] = courtFreeAt[minIdx];
+    courtFreeAt[minIdx] += avgDur;
+  });
+  return map;
+}
+
 function timeToMinutes(t){
   if(!t) return null;
   var m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
@@ -1540,11 +1593,13 @@ function searchPlayerMatches(data, query){
     if(mb===null) return -1;
     return ma-mb;
   });
+  var dynEstimates = estimateQueueStartTimes(data, queueSorted);
   queueSorted.forEach(function(m, idx){
     if(nameMatches(m.teamA) || nameMatches(m.teamB)){
       var mine = nameMatches(m.teamA) ? 'A' : 'B';
       var opp = mine==='A' ? m.teamB : m.teamA;
-      results.push({ status:'queued', position: idx+1, opponent: teamLabel(opp), time: m.time||'', matchCode: m.matchCode });
+      var timeLabel = dynEstimates && dynEstimates[m.id] ? fmtHHMM(dynEstimates[m.id])+'頃' : (m.time||'');
+      results.push({ status:'queued', position: idx+1, opponent: teamLabel(opp), time: timeLabel, matchCode: m.matchCode });
     }
   });
 
@@ -1677,13 +1732,16 @@ function mountProgress(eventId,data,role){
     if(mb===null) return -1;
     return ma-mb;
   });
-  root.appendChild(el('div',{className:'section-label'},'キュー待ち（残り'+queue.length+'件・予測時刻の早い順）'));
+  var dynamicEstimates = estimateQueueStartTimes(data, queueSorted);
+  var queueLabel = dynamicEstimates ? 'キュー待ち（残り'+queue.length+'件・実績ペースによる予測）' : 'キュー待ち（残り'+queue.length+'件・予測時刻の早い順）';
+  root.appendChild(el('div',{className:'section-label'},queueLabel));
   var queueWrap=el('div');
   queueSorted.slice(0,10).forEach(function(m,idx){
+    var timeLabel = dynamicEstimates && dynamicEstimates[m.id] ? fmtHHMM(dynamicEstimates[m.id])+'頃' : (m.time||'');
     queueWrap.appendChild(el('div',{className:'queue-row'},[
       el('span',{className:'queue-idx'},String(idx+1)),
       el('span',{className:'queue-teams'},teamLabel(m.teamA)+' vs '+teamLabel(m.teamB)),
-      el('span',{className:'queue-time'},m.time||'')
+      el('span',{className:'queue-time'},timeLabel)
     ]));
   });
   if(queue.length===0){
