@@ -427,10 +427,10 @@ function applyPendingResults(data){
     }
 
     // 実績ペース算出用：決着がついた試合の所要時間を記録する（リーグ／ブラケット／単発いずれも対象）
-    // 「試合開始」を押した実際の時刻(startedAt)があればそちらを使い、無い場合のみ配信時刻(assignedAt)で代用する
-    var baseStartTime = c.startedAt || c.assignedAt;
-    if(isDecisive && baseStartTime && r.finishedAt){
-      var dur = r.finishedAt - baseStartTime;
+    // 配信された時刻(assignedAt)を基準にする（＝選手が呼ばれる実際のタイミングであり、
+    // 配信から試合開始までの移動・準備時間も含めた方が、次の呼び出し予測の精度が上がるため）
+    if(isDecisive && c.assignedAt && r.finishedAt){
+      var dur = r.finishedAt - c.assignedAt;
       if(dur > 0 && dur < 3*60*60*1000){ // 3時間以上は異常値として除外
         durations.push(dur);
         if(durations.length > 30) durations = durations.slice(durations.length-30);
@@ -1807,7 +1807,7 @@ function estimateQueueStartTimes(data, queueSortedList){
   for(var i=1;i<=courtCount;i++){
     var c = (data.courts||{})[String(i)];
     if(c && c.match && (c.status==='live' || c.status==='assigned')){
-      var startedAt = c.startedAt || c.assignedAt || now;
+      var startedAt = c.assignedAt || now;
       var elapsed = now - startedAt;
       var remaining = Math.max(avgDur - elapsed, avgDur*0.15);
       courtFreeAt.push(now + remaining);
