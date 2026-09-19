@@ -1107,7 +1107,7 @@ function buildLeagueCard(eventId, data, league, isAdmin, refreshFn){
       var iWon = (m.i===i && m.result.winner==='A') || (m.j===i && m.result.winner==='B');
       if(m.result.retired){
         var iRetired = (m.i===i && m.result.retiredSide==='A') || (m.j===i && m.result.retiredSide==='B');
-        tr.appendChild(el('td',{className: iRetired?'mark-retired':(iWon?'mark-o':'mark-x')}, iRetired?'棄権':(iWon?'○':'×')));
+        tr.appendChild(el('td',{className: iRetired?'mark-retired':(iWon?'mark-o':'mark-x')}, iRetired?'キ':(iWon?'○':'×')));
       }else{
         tr.appendChild(el('td',{className: iWon?'mark-o':'mark-x'}, iWon?'○':'×'));
       }
@@ -1168,12 +1168,16 @@ function buildBracketCard(data, bracket){
     rounds[r].forEach(function(m){
       var aLabel = m.teamA ? teamLabel(m.teamA) : bracketSlotLabel(data, m.slotA);
       var bLabel = m.teamB ? teamLabel(m.teamB) : bracketSlotLabel(data, m.slotB);
+      if(m.result && m.result.retired){
+        if(m.result.retiredSide==='A') aLabel += '（キ）';
+        if(m.result.retiredSide==='B') bLabel += '（キ）';
+      }
       var row = el('div',{className:'bracket-match'});
       var aEl = el('span',{className: (!m.teamA?'pending':(m.result && m.result.winner==='A'?'winner':''))}, aLabel);
       var bEl = el('span',{className: (!m.teamB?'pending':(m.result && m.result.winner==='B'?'winner':''))}, bLabel);
       row.appendChild(aEl); row.appendChild(el('span',{},'vs')); row.appendChild(bEl);
       if(m.result){
-        row.appendChild(el('span',{className:'score'}, m.result.retired ? '棄権' : (m.result.gameWinsA+'-'+m.result.gameWinsB)));
+        row.appendChild(el('span',{className:'score'}, m.result.retired ? 'キ' : (m.result.gameWinsA+'-'+m.result.gameWinsB)));
       }
       roundWrap.appendChild(row);
     });
