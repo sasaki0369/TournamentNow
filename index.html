@@ -433,9 +433,11 @@ function applyPendingResults(data){
     // 待機・選手確認を含めた『コート占有時間』を基準にすることで、後続試合の予測を実運用に合わせる。
     if(isDecisive && c.assignedAt && r.finishedAt){
       var dur = r.finishedAt - c.assignedAt;
-      if(dur > 0 && dur < 3*60*60*1000){ // 3時間以上は異常値として除外
+      // 棄権試合は通常の試合時間を表さないため、予測学習の母集団から除外する。
+      if(!r.retired && dur > 0 && dur < 3*60*60*1000){ // 3時間以上は異常値として除外
         durations.push(dur);
-        if(durations.length > 30) durations = durations.slice(durations.length-30);
+        // 予測に使うのは常に直近20試合。保存側も20件に絞る。
+        if(durations.length > 20) durations = durations.slice(durations.length-20);
       }
     }
 
@@ -1449,7 +1451,7 @@ function showHelpModal(){
     ]),
     section('⑤「コート状況」タブ','',[
       '<b>自分の試合を探す</b>：選手名の一部を入力すると、進行中／待ち順と予測時刻／結果、をまとめて確認できます。',
-      '<b>キュー待ちの予測時刻</b>：最初はCSV記載の予測時刻ですが、実績が3件以上貯まると、assignedAt（大会Nowからコートへ配信した時刻）から終了までの平均所要時間を使った動的予測に切り替わります。試合終了・配信・予定超過に応じて先の試合まで随時再計算します。'
+      '<b>キュー待ちの予測時刻</b>：正常終了の実績が19試合まではCSV記載の時間差を維持し、最新のassignedAt（大会Nowからコートへ配信した時刻）に合わせて全体を補正します。20試合そろった後は、直近20試合のassignedAtから終了までの平均所要時間を使い、コート別の空き時刻をシミュレーションして先の試合まで随時再予測します。'
     ]),
     section('⑥「設定」タブ','',[
       '<b>棄権（不戦敗）</b>：選手名を検索して登録すると、その選手（チーム）が絡む未実施の試合はすべて自動的に相手の不戦勝になります。バドるで試合途中に棄権した場合も自動的にここへ登録されます。',
@@ -1825,10 +1827,11 @@ function buildWithdrawalManager(eventId, data){
   return wrap;
 }
 
-/* ══ 実績ベースの所要時間・予測時刻 ══ */
+/* ══ CSV基準＋実績ベースの所要時間・予測時刻 ══ */
 function avgMatchDurationMs(data){
-  var arr = toArray(data.matchDurations);
-  if(arr.length < 3) return null; // サンプルが少なすぎる間は使わない
+  var arr = toArray(data.matchDurations).slice(-20);
+  // 正常終了した実績が20試合そろうまではCSVの時間差を使う。
+  if(arr.length < 20) return null;
   var sum = arr.reduce(function(s,v){return s+v;}, 0);
   return sum / arr.length;
 }
@@ -1840,11 +1843,50 @@ function fmtHHMM(ts){
   return h+':'+m;
 }
 
-/* 各コートが次に空く見込み時刻から、キューの各試合の開始見込み時刻を『早く空くコートから順に』シミュレーションする。
-   現在試合の経過時間は assignedAt（大会Nowから配信された時刻）基準。画面は1秒ごとに再計算するため、
-   試合終了・新規配信・平均所要時間の更新・予定超過に応じて、先の試合まで随時再予測される。
-   実績データが3件未満の場合はnullを返し、CSV記載の予測時刻にフォールバックする。 */
-function estimateQueueStartTimes(data, queueSortedList){
+/* HH:MM を「今日のその時刻」のtimestampに変換する。深夜またぎにも最低限対応。 */
+function scheduledTsToday(time, aroundTs){
+  var mins = timeToMinutes(time);
+  if(mins===null) return null;
+  var base = new Date(aroundTs || Date.now());
+  var d = new Date(base.getFullYear(), base.getMonth(), base.getDate(), Math.floor(mins/60), mins%60, 0, 0);
+  // aroundTsから12時間以上離れる場合は日付またぎとみなす
+  if(aroundTs){
+    if(d.getTime() - aroundTs > 12*60*60*1000) d.setDate(d.getDate()-1);
+    else if(aroundTs - d.getTime() > 12*60*60*1000) d.setDate(d.getDate()+1);
+  }
+  return d.getTime();
+}
+
+/* 実績20試合未満：CSVに記載された時刻差をそのまま維持する。
+   大会がCSV予定より早い/遅い場合にも追随できるよう、現在コートへ配信済みの試合のうち
+   assignedAtが最も新しいものを基準に「実際の配信時刻－CSV予定時刻」のずれを求め、
+   そのずれだけCSV時刻全体を平行移動する。これによりCSVの2分/3分等の間隔は崩れない。 */
+function estimateByCsvIntervals(data, queueSortedList){
+  var now = Date.now();
+  var latest = null;
+  Object.keys(data.courts||{}).forEach(function(cno){
+    var c=(data.courts||{})[cno];
+    if(!c || !c.match || !c.assignedAt || !c.match.time) return;
+    if(!latest || c.assignedAt > latest.assignedAt) latest=c;
+  });
+
+  var shiftMs = 0;
+  if(latest){
+    var sched = scheduledTsToday(latest.match.time, latest.assignedAt);
+    if(sched!==null) shiftMs = latest.assignedAt - sched;
+  }
+
+  var map={};
+  queueSortedList.forEach(function(m){
+    var sched=scheduledTsToday(m.time, now);
+    if(sched!==null) map[m.id]=sched+shiftMs;
+  });
+  return map;
+}
+
+/* 実績20試合以上：直近20試合の assignedAt→finishedAt 平均を使い、
+   各コートの次回空き時刻を計算して、キューを早く空くコートへ順次仮想配置する。 */
+function estimateByRecent20(data, queueSortedList){
   var avgDur = avgMatchDurationMs(data);
   if(avgDur === null) return null;
   var courtCount = data.courtCount || 0;
@@ -1862,14 +1904,23 @@ function estimateQueueStartTimes(data, queueSortedList){
       courtFreeAt.push(now);
     }
   }
-  var map = {}; // queue item id -> 予測ミリ秒
+  var map = {};
   queueSortedList.forEach(function(m){
     var minIdx = 0;
-    for(var i=1;i<courtFreeAt.length;i++){ if(courtFreeAt[i] < courtFreeAt[minIdx]) minIdx = i; }
+    for(var j=1;j<courtFreeAt.length;j++) if(courtFreeAt[j] < courtFreeAt[minIdx]) minIdx=j;
     map[m.id] = courtFreeAt[minIdx];
     courtFreeAt[minIdx] += avgDur;
   });
   return map;
+}
+
+/* 予測ロジック本体
+   0～19試合終了：CSVの時間差（最新assignedAtで全体を平行移動）
+   20試合以上終了：直近20試合の平均所要時間 × コート別空き時刻シミュレーション */
+function estimateQueueStartTimes(data, queueSortedList){
+  var completed = toArray(data.matchDurations).length;
+  if(completed < 20) return estimateByCsvIntervals(data, queueSortedList);
+  return estimateByRecent20(data, queueSortedList);
 }
 
 function timeToMinutes(t){
