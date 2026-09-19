@@ -1081,6 +1081,7 @@ extraStyle.textContent = [
   'table.standing{width:100%;border-collapse:collapse;font-size:12px}',
   'table.standing th,table.standing td{border:1px solid var(--rule);padding:5px 6px;text-align:center}',
   'table.standing td.name-cell{text-align:left}',
+  'table.standing td.self-cell{background:#e5e7eb;color:transparent;pointer-events:none;user-select:none}',
   'table.standing td.mark-o{color:#2a7d2a;font-weight:700}',
   'table.standing td.mark-x{color:var(--accent)}',
   'table.standing td.mark-retired{color:var(--accent);font-size:11px;font-weight:700;background:#fdeae4}',
@@ -1136,7 +1137,7 @@ function buildLeagueCard(eventId, data, league, isAdmin, refreshFn){
     var tr = el('tr');
     tr.appendChild(el('td',{className:'name-cell'},teamLabel(league.participants[i])));
     for(var j=0;j<n;j++){
-      if(i===j){ tr.appendChild(el('td',{},'')); continue; }
+      if(i===j){ tr.appendChild(el('td',{className:'self-cell','aria-label':'同一選手・対戦なし'},'')); continue; }
       var m = participantMatchResult(league, i, j);
       if(!m){ tr.appendChild(el('td',{},'')); continue; }
       if(!m.result){
