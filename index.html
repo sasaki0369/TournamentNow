@@ -427,10 +427,10 @@ function applyPendingResults(data){
     }
 
     // 実績ペース算出用：決着がついた試合の所要時間を記録する（リーグ／ブラケット／単発いずれも対象）
-    // 配信された時刻(assignedAt)を基準にする（＝選手が呼ばれる実際のタイミングであり、
-    // 配信から試合開始までの移動・準備時間も含めた方が、次の呼び出し予測の精度が上がるため）
-    if(isDecisive && c.assignedAt && r.finishedAt){
-      var dur = r.finishedAt - c.assignedAt;
+    // バドるで「試合開始」を押した実時刻(startedAt)から終了までを実績所要時間として使う。
+    // 配信時刻ではなく実際のゲーム開始時刻を使うことで、後続試合の開始予測が実進行に追随する。
+    if(isDecisive && c.startedAt && r.finishedAt){
+      var dur = r.finishedAt - c.startedAt;
       if(dur > 0 && dur < 3*60*60*1000){ // 3時間以上は異常値として除外
         durations.push(dur);
         if(durations.length > 30) durations = durations.slice(durations.length-30);
@@ -568,8 +568,13 @@ function assignIdleCourts(data){
    data.withdrawnPlayers = { "選手名": true, ... } に登録された選手が含まれる、
    まだ結果の出ていない試合（キュー・リーグ・ブラケット）を、相手側の不戦勝として自動的に決着させる。
    両者とも棄権者を含む場合は判定不能のため、そのまま残す（本部が手動対応）。 */
-function makeWalkoverResult(winnerSide){
-  return { winner: winnerSide, gameWinsA: winnerSide==='A'?2:0, gameWinsB: winnerSide==='B'?2:0, pointsA:0, pointsB:0, retired:true, retiredSide: winnerSide==='A'?'B':'A' };
+function makeWalkoverResult(winnerSide, data){
+  var rules = Object.assign({format:'best3',points:21}, (data&&data.matchRules)||{});
+  var gamesToWin = rules.format==='single' ? 1 : 2;
+  var total = (Number(rules.points)||21) * gamesToWin;
+  return { winner:winnerSide, gameWinsA:winnerSide==='A'?gamesToWin:0, gameWinsB:winnerSide==='B'?gamesToWin:0,
+    pointsA:winnerSide==='A'?total:0, pointsB:winnerSide==='B'?total:0,
+    retired:true, retiredSide:winnerSide==='A'?'B':'A', walkover:true };
 }
 function teamHasWithdrawn(team, withdrawn){
   return toArray(team).some(function(n){ return n && withdrawn[n]; });
@@ -597,8 +602,8 @@ function applyWithdrawals(data){
       if(m.result || isBeingPlayed('league', lid, m.id)) return m;
       var a = lg.participants[m.i]||[], b = lg.participants[m.j]||[];
       var aOut = teamHasWithdrawn(a, withdrawn), bOut = teamHasWithdrawn(b, withdrawn);
-      if(aOut && !bOut){ changed=true; return Object.assign({}, m, { result: makeWalkoverResult('B') }); }
-      if(bOut && !aOut){ changed=true; return Object.assign({}, m, { result: makeWalkoverResult('A') }); }
+      if(aOut && !bOut){ changed=true; return Object.assign({}, m, { result: makeWalkoverResult('B', data) }); }
+      if(bOut && !aOut){ changed=true; return Object.assign({}, m, { result: makeWalkoverResult('A', data) }); }
       return m;
     });
     if(newMatches !== lg.matches){ leagues[lid] = Object.assign({}, lg, { matches: newMatches }); }
@@ -612,8 +617,8 @@ function applyWithdrawals(data){
       var b = m.teamB || resolveSlotRef(data, m.slotB);
       if(!a || !b) return m; // まだ両方の対戦相手が確定していない
       var aOut = teamHasWithdrawn(a, withdrawn), bOut = teamHasWithdrawn(b, withdrawn);
-      if(aOut && !bOut){ changed=true; return Object.assign({}, m, { teamA:a, teamB:b, result: makeWalkoverResult('B') }); }
-      if(bOut && !aOut){ changed=true; return Object.assign({}, m, { teamA:a, teamB:b, result: makeWalkoverResult('A') }); }
+      if(aOut && !bOut){ changed=true; return Object.assign({}, m, { teamA:a, teamB:b, result: makeWalkoverResult('B', data) }); }
+      if(bOut && !aOut){ changed=true; return Object.assign({}, m, { teamA:a, teamB:b, result: makeWalkoverResult('A', data) }); }
       return m;
     });
     if(newMatches !== br.matches){ brackets[bid] = Object.assign({}, br, { matches: newMatches }); }
@@ -1428,7 +1433,7 @@ function showHelpModal(){
       '<b>順位判定</b>：勝敗数→取得ゲーム率→取得ポイント率の順に判定。すべて同率の場合のみ本部が手動で順位を確定します。',
       '<b>進行中表示</b>：まだ結果の出ていないマスのうち、実際にコートで進行中のものには点滅マークとコート番号が表示されます。',
       '<b>並び替え</b>：既定ではリーグ名のアルファベット順。左上の「⠿」を掴んでドラッグすると自由に並べ替えられます。',
-      '<b>棄権</b>：棄権があった試合は、負けた側に赤字で「キ」と表示されます。'
+      '<b>棄権</b>：棄権があった試合は、負けた側に赤字で「キ」と表示されます。試合前棄権は大会の得点ルールに応じたストレート勝ち、試合途中の棄権は実得点を残して残りを勝者側へ補完した公式スコアとして扱います。'
     ]),
     section('⑤「コート状況」タブ','',[
       '<b>自分の試合を探す</b>：選手名の一部を入力すると、進行中／待ち順と予測時刻／結果、をまとめて確認できます。',
@@ -1577,7 +1582,7 @@ function buildWithdrawalManager(eventId, data){
   list.appendChild(addBtn);
   section.appendChild(list);
   section.appendChild(el('div',{className:'settings-row-sub',style:{margin:'8px 4px 0'}},
-    'ダブルスの場合は、ペアの片方の名前だけで登録すればチーム全体が不戦敗の対象になります。すでに結果が出ている試合や、現在コートで進行中の試合には影響しません。'));
+    'ダブルスの場合は、ペアの片方の名前だけで登録すればチーム全体が不戦敗の対象になります。未実施試合は大会の得点ルールに合わせ、相手のストレート勝ち（21点制なら21-0、21-0／15点制なら15-0、15-0）として順位計算に反映します。すでに結果が出ている試合や、現在コートで進行中の試合には影響しません。'));
   return section;
 }
 
