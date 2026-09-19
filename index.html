@@ -1020,10 +1020,15 @@ function buildCourtCard(courtNo,court){
   var statusLabel=court.status==='live'?'進行中':(court.status==='assigned'?'配信済み・開始待ち':'空き');
   var card=el('div',{className:'court-card st-'+statusClass});
   card.appendChild(el('div',{className:'court-no'},'コート '+courtNo));
-  card.appendChild(el('div',{className:'court-status '+statusClass},[
-    el('span',{className:'court-dot '+(statusClass==='live'?'live':'')}),
-    statusLabel
-  ]));
+  var statusChildren=[el('span',{className:'court-dot '+(statusClass==='live'?'live':'')}), statusLabel];
+  if(court.status==='live' && court.startedAt){
+    var elapsedMs=Math.max(0,Date.now()-court.startedAt);
+    var elapsedMin=Math.floor(elapsedMs/60000);
+    var elapsedSec=Math.floor((elapsedMs%60000)/1000);
+    statusChildren.push(el('span',{className:'court-live-time'},'開始 '+fmtHHMM(court.startedAt)));
+    statusChildren.push(el('span',{className:'court-elapsed'},'経過 '+elapsedMin+':'+String(elapsedSec).padStart(2,'0')));
+  }
+  card.appendChild(el('div',{className:'court-status '+statusClass},statusChildren));
   if(court.status==='idle'||!court.match){
     card.appendChild(el('div',{className:'court-idle-msg'},'次の試合待ち'));
   }else{
@@ -1062,6 +1067,9 @@ extraStyle.textContent = [
   'table.standing td.mark-retired{color:var(--accent);font-size:11px;font-weight:700;background:#fdeae4}',
   'table.standing td.mark-live{color:var(--accent);font-family:var(--mono);font-size:10.5px;white-space:nowrap}',
   '.live-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:3px;animation:liveBlink 1.2s infinite}',
+  '.court-status{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
+  '.court-live-time,.court-elapsed{font-family:var(--mono);font-size:10px;font-weight:500;white-space:nowrap;color:var(--ink2)}',
+  '.court-elapsed{color:var(--accent);font-weight:700}',
   '@keyframes liveBlink{0%,100%{opacity:1}50%{opacity:.3}}',
   '.live-legend{font-size:11px;color:var(--ink3);margin-top:6px;display:flex;align-items:center}',
   '.tie-warn{background:#fff3e0;color:#a15c00;font-size:12px;padding:8px 10px;border-radius:4px;margin-top:8px}',
@@ -1809,9 +1817,9 @@ function estimateQueueStartTimes(data, queueSortedList){
   for(var i=1;i<=courtCount;i++){
     var c = (data.courts||{})[String(i)];
     if(c && c.match && (c.status==='live' || c.status==='assigned')){
-      var startedAt = c.assignedAt || now;
-      var elapsed = now - startedAt;
-      var remaining = Math.max(avgDur - elapsed, avgDur*0.15);
+      var baseAt = (c.status==='live' ? (c.startedAt || c.assignedAt) : c.assignedAt) || now;
+      var elapsed = now - baseAt;
+      var remaining = Math.max(avgDur - elapsed, 60*1000);
       courtFreeAt.push(now + remaining);
     }else{
       courtFreeAt.push(now);
@@ -1946,6 +1954,8 @@ function buildPlayerSearch(data){
   return wrap;
 }
 
+var progressRefreshTimer=null;
+
 function mountProgress(eventId,data,role){
   var isAdmin=role==='admin';
   var root=el('div',{style:{minHeight:'100vh'}});
@@ -2019,6 +2029,8 @@ function mountProgress(eventId,data,role){
   root.appendChild(queueWrap);
 
   render(root);
+  if(progressRefreshTimer) clearTimeout(progressRefreshTimer);
+  progressRefreshTimer=setTimeout(function(){ mountProgress(eventId,data,role); },1000);
 }
 
 /* ══ 起動 ══ */
