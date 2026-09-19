@@ -828,6 +828,10 @@ function mountSetup(){
   var courtInp=el('input',{className:'field-inp',type:'number',value:'12',min:'1',max:'40'});
   var card2=el('div',{className:'card'},[courtLabel,courtInp]);
 
+  var venueLabel=el('div',{className:'field-label'},'会場（任意・バドるのスコアシートに反映されます）');
+  var venueInp=el('input',{className:'field-inp',placeholder:'例：町田市立総合体育館'});
+  var card2b=el('div',{className:'card'},[venueLabel,venueInp]);
+
   var csvLabel=el('div',{className:'field-label'},'試合キュー（CSV）');
   var csvFile=el('input',{type:'file',accept:'.csv',style:{display:'block',marginTop:'8px'}});
   var csvInfo=el('div',{className:'csv-info',style:{marginTop:'10px'}},[
@@ -872,6 +876,7 @@ function mountSetup(){
     var eventId=uid()+uid();
     var initial={
       eventName:eventName,
+      venueName:venueInp.value.trim(),
       courtCount:courtCount,
       createdAt:Date.now(),
       queue:parsedQueue,
@@ -900,7 +905,7 @@ function mountSetup(){
     });
   }
 
-  wrap.appendChild(card1);wrap.appendChild(card2);wrap.appendChild(card3);
+  wrap.appendChild(card1);wrap.appendChild(card2);wrap.appendChild(card2b);wrap.appendChild(card3);
   wrap.appendChild(errEl);wrap.appendChild(startBtn);
   if(pastWrap)wrap.appendChild(pastWrap);
 
@@ -1389,6 +1394,9 @@ function buildSettingsView(eventId, data){
   var navSection = el('div',{className:'settings-section'});
   navSection.appendChild(el('div',{className:'settings-section-title'},'大会'));
   var navList = el('div',{className:'settings-list'});
+  var venueInp2 = el('input',{className:'settings-inp',value:data.venueName||'',placeholder:'例：町田市立総合体育館'});
+  venueInp2.onchange=function(){ dbRef(eventId).child('venueName').set(venueInp2.value.trim()); };
+  navList.appendChild(settingsRow('会場','バドるのスコアシート・「場所」欄に自動反映されます', venueInp2));
   var backBtn = el('button',{className:'pill-btn'},'一覧へ');
   backBtn.onclick=function(){ location.hash=''; };
   navList.appendChild(settingsRow('大会一覧・新規作成に戻る','試合を進めながらでも、いつでもこの大会に戻ってこられます', backBtn));
