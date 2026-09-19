@@ -332,13 +332,15 @@ function computeStandings(league){
   });
   var matches = toArray(league.matches);
   matches.forEach(function(m){
-    if(!m.result) return;
+    if(!m.result || m.result.voided) return;
     var a = stats[m.i], b = stats[m.j];
-    a.gamesWon += m.result.gameWinsA||0; a.gamesLost += m.result.gameWinsB||0;
-    b.gamesWon += m.result.gameWinsB||0; b.gamesLost += m.result.gameWinsA||0;
-    a.pointsWon += m.result.pointsA||0; a.pointsLost += m.result.pointsB||0;
-    b.pointsWon += m.result.pointsB||0; b.pointsLost += m.result.pointsA||0;
-    if(m.result.winner==='A'){ a.wins++; b.losses++; } else { b.wins++; a.losses++; }
+    if(!m.result.excludeGamePoint){
+      a.gamesWon += m.result.gameWinsA||0; a.gamesLost += m.result.gameWinsB||0;
+      b.gamesWon += m.result.gameWinsB||0; b.gamesLost += m.result.gameWinsA||0;
+      a.pointsWon += m.result.pointsA||0; a.pointsLost += m.result.pointsB||0;
+      b.pointsWon += m.result.pointsB||0; b.pointsLost += m.result.pointsA||0;
+    }
+    if(m.result.winner==='A'){ a.wins++; b.losses++; } else if(m.result.winner==='B'){ b.wins++; a.losses++; }
   });
   stats.forEach(function(s){
     s.gameRate = (s.gamesWon+s.gamesLost)>0 ? s.gamesWon/(s.gamesWon+s.gamesLost) : 0;
@@ -427,10 +429,10 @@ function applyPendingResults(data){
     }
 
     // 実績ペース算出用：決着がついた試合の所要時間を記録する（リーグ／ブラケット／単発いずれも対象）
-    // バドるで「試合開始」を押した実時刻(startedAt)から終了までを実績所要時間として使う。
-    // 配信時刻ではなく実際のゲーム開始時刻を使うことで、後続試合の開始予測が実進行に追随する。
-    if(isDecisive && c.startedAt && r.finishedAt){
-      var dur = r.finishedAt - c.startedAt;
+    // 大会Nowからコートへ配信した時刻(assignedAt)から終了までを実績所要時間として使う。
+    // 待機・選手確認を含めた『コート占有時間』を基準にすることで、後続試合の予測を実運用に合わせる。
+    if(isDecisive && c.assignedAt && r.finishedAt){
+      var dur = r.finishedAt - c.assignedAt;
       if(dur > 0 && dur < 3*60*60*1000){ // 3時間以上は異常値として除外
         durations.push(dur);
         if(durations.length > 30) durations = durations.slice(durations.length-30);
@@ -570,11 +572,16 @@ function assignIdleCourts(data){
    両者とも棄権者を含む場合は判定不能のため、そのまま残す（本部が手動対応）。 */
 function makeWalkoverResult(winnerSide, data){
   var rules = Object.assign({format:'best3',points:21}, (data&&data.matchRules)||{});
+  var mode = (data&&data.walkoverRule) || 'A';
   var gamesToWin = rules.format==='single' ? 1 : 2;
   var total = (Number(rules.points)||21) * gamesToWin;
-  return { winner:winnerSide, gameWinsA:winnerSide==='A'?gamesToWin:0, gameWinsB:winnerSide==='B'?gamesToWin:0,
-    pointsA:winnerSide==='A'?total:0, pointsB:winnerSide==='B'?total:0,
-    retired:true, retiredSide:winnerSide==='A'?'B':'A', walkover:true };
+  // A: 補完スコア方式（標準） / B: 勝敗のみ（得失ゲーム・得失点に算入しない）
+  return { winner:winnerSide,
+    gameWinsA:mode==='A'?(winnerSide==='A'?gamesToWin:0):0,
+    gameWinsB:mode==='A'?(winnerSide==='B'?gamesToWin:0):0,
+    pointsA:mode==='A'?(winnerSide==='A'?total:0):0,
+    pointsB:mode==='A'?(winnerSide==='B'?total:0):0,
+    excludeGamePoint: mode==='B', retired:true, retiredSide:winnerSide==='A'?'B':'A', walkover:true, walkoverRule:mode };
 }
 function teamHasWithdrawn(team, withdrawn){
   return toArray(team).some(function(n){ return n && withdrawn[n]; });
@@ -599,9 +606,14 @@ function applyWithdrawals(data){
   Object.keys(leagues).forEach(function(lid){
     var lg = leagues[lid];
     var newMatches = toArray(lg.matches).map(function(m){
-      if(m.result || isBeingPlayed('league', lid, m.id)) return m;
       var a = lg.participants[m.i]||[], b = lg.participants[m.j]||[];
       var aOut = teamHasWithdrawn(a, withdrawn), bOut = teamHasWithdrawn(b, withdrawn);
+      // C: 大会離脱者が含まれるリーグ戦は、実施済みを含め順位計算から除外する。
+      if((data.walkoverRule||'A')==='C' && (aOut || bOut)){
+        if(!m.result || !m.result.voided){ changed=true; return Object.assign({}, m, {result:{voided:true, walkover:true, walkoverRule:'C'}}); }
+        return m;
+      }
+      if(m.result || isBeingPlayed('league', lid, m.id)) return m;
       if(aOut && !bOut){ changed=true; return Object.assign({}, m, { result: makeWalkoverResult('B', data) }); }
       if(bOut && !aOut){ changed=true; return Object.assign({}, m, { result: makeWalkoverResult('A', data) }); }
       return m;
@@ -1208,7 +1220,7 @@ function buildBracketCard(data, bracket){
       var bEl = el('span',{className: (!m.teamB?'pending':(m.result && m.result.winner==='B'?'winner':''))}, bLabel);
       row.appendChild(aEl); row.appendChild(el('span',{},'vs')); row.appendChild(bEl);
       if(m.result){
-        row.appendChild(el('span',{className:'score'}, m.result.retired ? 'キ' : (m.result.gameWinsA+'-'+m.result.gameWinsB)));
+        row.appendChild(el('span',{className:'score'}, m.result.voided ? '除' : (m.result.retired ? 'キ' : (m.result.gameWinsA+'-'+m.result.gameWinsB))));
       }
       roundWrap.appendChild(row);
     });
@@ -1437,7 +1449,7 @@ function showHelpModal(){
     ]),
     section('⑤「コート状況」タブ','',[
       '<b>自分の試合を探す</b>：選手名の一部を入力すると、進行中／待ち順と予測時刻／結果、をまとめて確認できます。',
-      '<b>キュー待ちの予測時刻</b>：最初はCSV記載の予測時刻ですが、実際の試合結果が3件以上貯まると、そこからは実際の1試合あたりの所要時間を元にした動的な予測に自動的に切り替わります。'
+      '<b>キュー待ちの予測時刻</b>：最初はCSV記載の予測時刻ですが、実績が3件以上貯まると、assignedAt（大会Nowからコートへ配信した時刻）から終了までの平均所要時間を使った動的予測に切り替わります。試合終了・配信・予定超過に応じて先の試合まで随時再計算します。'
     ]),
     section('⑥「設定」タブ','',[
       '<b>棄権（不戦敗）</b>：選手名を検索して登録すると、その選手（チーム）が絡む未実施の試合はすべて自動的に相手の不戦勝になります。バドるで試合途中に棄権した場合も自動的にここへ登録されます。',
@@ -1582,7 +1594,7 @@ function buildWithdrawalManager(eventId, data){
   list.appendChild(addBtn);
   section.appendChild(list);
   section.appendChild(el('div',{className:'settings-row-sub',style:{margin:'8px 4px 0'}},
-    'ダブルスの場合は、ペアの片方の名前だけで登録すればチーム全体が不戦敗の対象になります。未実施試合は大会の得点ルールに合わせ、相手のストレート勝ち（21点制なら21-0、21-0／15点制なら15-0、15-0）として順位計算に反映します。すでに結果が出ている試合や、現在コートで進行中の試合には影響しません。'));
+    'ダブルスの場合は、ペアの片方の名前だけで登録すればチーム全体が対象になります。不戦敗の順位計算方法は下のA～Cから大会ごとに選択できます（初期値A）。Aは補完スコア、Bは勝敗のみ、Cは大会離脱者のリーグ戦を順位計算から除外します。'));
   return section;
 }
 
@@ -1599,6 +1611,24 @@ function buildWithdrawalManager(eventId, data){
   wrap.appendChild(navSection);
 
   wrap.appendChild(buildWithdrawalManager(eventId, data));
+
+  // --- 不戦敗の順位計算方法 ---
+  var woSection = el('div',{className:'settings-section'});
+  woSection.appendChild(el('div',{className:'settings-section-title'},'不戦敗の計算方法'));
+  var woCard = el('div',{className:'settings-list',style:{padding:'14px 16px'}});
+  var woMode = data.walkoverRule || 'A';
+  var woOpts = [
+    {value:'A',label:'A（標準）',desc:'補完スコア方式：相手のストレート勝ちとして、得失ゲーム・得失点にも算入します。'},
+    {value:'B',label:'B',desc:'勝敗のみ方式：勝敗には算入しますが、不戦試合の得失ゲーム・得失点は算入しません。'},
+    {value:'C',label:'C',desc:'大会離脱方式：棄権登録された選手が含まれるリーグ戦は、実施済みを含め順位計算から除外します。'}
+  ];
+  woOpts.forEach(function(opt){
+    var btn=el('button',{className:'pill-btn'+(woMode===opt.value?' pill-dark':'')},opt.label);
+    btn.onclick=function(){ dbRef(eventId).child('walkoverRule').set(opt.value); };
+    woCard.appendChild(el('div',{style:{marginBottom:'10px'}},[btn,el('div',{className:'settings-row-sub',style:{marginTop:'5px'}},opt.desc)]));
+  });
+  woSection.appendChild(woCard);
+  wrap.appendChild(woSection);
 
   // --- 試合ルール（バドる連携時に自動反映） ---
   var rulesSection = el('div',{className:'settings-section'});
@@ -1810,8 +1840,10 @@ function fmtHHMM(ts){
   return h+':'+m;
 }
 
-/* 各コートが次に空く見込み時刻から、キューの各試合の開始見込み時刻を「早く空くコートから順に」シミュレーションする。
-   実績データが3件未満の場合はnullを返し、呼び出し側でCSV記載の予測時刻にフォールバックする。 */
+/* 各コートが次に空く見込み時刻から、キューの各試合の開始見込み時刻を『早く空くコートから順に』シミュレーションする。
+   現在試合の経過時間は assignedAt（大会Nowから配信された時刻）基準。画面は1秒ごとに再計算するため、
+   試合終了・新規配信・平均所要時間の更新・予定超過に応じて、先の試合まで随時再予測される。
+   実績データが3件未満の場合はnullを返し、CSV記載の予測時刻にフォールバックする。 */
 function estimateQueueStartTimes(data, queueSortedList){
   var avgDur = avgMatchDurationMs(data);
   if(avgDur === null) return null;
@@ -1822,7 +1854,7 @@ function estimateQueueStartTimes(data, queueSortedList){
   for(var i=1;i<=courtCount;i++){
     var c = (data.courts||{})[String(i)];
     if(c && c.match && (c.status==='live' || c.status==='assigned')){
-      var baseAt = (c.status==='live' ? (c.startedAt || c.assignedAt) : c.assignedAt) || now;
+      var baseAt = c.assignedAt || now;
       var elapsed = now - baseAt;
       var remaining = Math.max(avgDur - elapsed, 60*1000);
       courtFreeAt.push(now + remaining);
@@ -1893,7 +1925,7 @@ function searchPlayerMatches(data, query){
         var opp = mine==='A' ? b : a;
         var won = (mine==='A' && m.result.winner==='A') || (mine==='B' && m.result.winner==='B');
         results.push({ status:'done', opponent: teamLabel(opp),
-          resultLabel: m.result.retired ? (won?'棄権勝ち':'棄権負け') : ((won?'○ 勝ち':'× 負け')+'　'+m.result.gameWinsA+'-'+m.result.gameWinsB),
+          resultLabel: m.result.voided ? '順位計算除外' : (m.result.retired ? (won?'棄権勝ち':'棄権負け') : ((won?'○ 勝ち':'× 負け')+'　'+m.result.gameWinsA+'-'+m.result.gameWinsB)),
           matchCode: lg.name+'-'+(m.id+1) });
       }
     });
@@ -1909,7 +1941,7 @@ function searchPlayerMatches(data, query){
         var opp = mine==='A' ? m.teamB : m.teamA;
         var won = (mine==='A' && m.result.winner==='A') || (mine==='B' && m.result.winner==='B');
         results.push({ status:'done', opponent: teamLabel(opp),
-          resultLabel: m.result.retired ? (won?'棄権勝ち':'棄権負け') : ((won?'○ 勝ち':'× 負け')+'　'+m.result.gameWinsA+'-'+m.result.gameWinsB),
+          resultLabel: m.result.voided ? '順位計算除外' : (m.result.retired ? (won?'棄権勝ち':'棄権負け') : ((won?'○ 勝ち':'× 負け')+'　'+m.result.gameWinsA+'-'+m.result.gameWinsB)),
           matchCode: br.name+'-'+m.id });
       }
     });
