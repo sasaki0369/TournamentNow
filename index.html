@@ -484,7 +484,7 @@ function applyPendingResults(data){
       var matches = toArray(lg.matches).map(function(m,idx){
         if(idx !== r.refMatchIndex) return m;
         if(!isDecisive) return m; // 中止された試合は結果を記録せず、再戦できるようキューへ戻す
-        return Object.assign({}, m, { result:{ winner:r.winner, gameWinsA:r.gameWinsA, gameWinsB:r.gameWinsB, pointsA:r.pointsA, pointsB:r.pointsB, retired: !!r.retired, retiredSide: r.retiredSide||null } });
+        return Object.assign({}, m, { result:{ winner:r.winner, gameWinsA:r.gameWinsA, gameWinsB:r.gameWinsB, pointsA:r.pointsA, pointsB:r.pointsB, gameScores:toArray(r.gameScores||r.officialGames), retired: !!r.retired, retiredSide: r.retiredSide||null } });
       });
       lg.matches = matches;
       leagues[r.refId] = lg;
@@ -498,7 +498,7 @@ function applyPendingResults(data){
       br.matches = toArray(br.matches).map(function(m){
         if(m.id !== r.refMatchIndex) return m;
         if(!isDecisive) return m;
-        return Object.assign({}, m, { result:{ winner:r.winner, gameWinsA:r.gameWinsA, gameWinsB:r.gameWinsB, pointsA:r.pointsA, pointsB:r.pointsB, retired: !!r.retired, retiredSide: r.retiredSide||null } });
+        return Object.assign({}, m, { result:{ winner:r.winner, gameWinsA:r.gameWinsA, gameWinsB:r.gameWinsB, pointsA:r.pointsA, pointsB:r.pointsB, gameScores:toArray(r.gameScores||r.officialGames), retired: !!r.retired, retiredSide: r.retiredSide||null } });
       });
       brackets[r.refId] = br;
       if(!isDecisive && r.teamA && r.teamB){
@@ -1311,6 +1311,19 @@ extraStyle.textContent = [
   '.tournament-team.pending{color:var(--ink3);font-style:italic}',
   '.tournament-team-score{font-family:var(--mono);font-size:12px;font-weight:800;color:var(--ink2)}',
   '.tournament-arrow{position:absolute;right:-27px;top:calc(50% - 9px);font-size:16px;color:#aaa;z-index:2}',
+  '.score-detail-trigger{cursor:pointer;touch-action:manipulation}',
+  '.score-detail-trigger:hover{filter:brightness(.97)}',
+  '.standing td.score-detail-trigger,.standing td.mgp-trigger{text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}',
+  '.mgp-trigger{cursor:pointer;touch-action:manipulation}',
+  '.detail-modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:10000;display:flex;align-items:center;justify-content:center;padding:18px}',
+  '.detail-modal{width:min(520px,96vw);max-height:88vh;overflow:auto;background:#fff;border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.25);padding:18px}',
+  '.detail-modal h3{margin:0 0 14px;font-size:18px}',
+  '.detail-versus{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;text-align:center;font-weight:800;margin:8px 0 14px}',
+  '.detail-total{text-align:center;font-family:var(--mono);font-size:24px;font-weight:900;margin:8px 0 14px}',
+  '.detail-games{width:100%;border-collapse:collapse;margin:8px 0 14px}',
+  '.detail-games th,.detail-games td{border-bottom:1px solid var(--rule);padding:7px 8px;text-align:center;font-size:13px}',
+  '.mgp-grid{display:grid;grid-template-columns:auto 1fr auto;gap:8px 12px;align-items:center;margin:8px 0 14px}',
+  '.mgp-grid .k{font-weight:900;font-size:16px}.mgp-grid .v{font-family:var(--mono);font-weight:800}.mgp-grid .pct{font-family:var(--mono);color:var(--ink3)}',
   '@media(max-width:700px){.tournament-tree{gap:28px;padding-left:4px}.tournament-round-col,.tournament-game{min-width:205px;width:205px}.tournament-game:not(.last-round)::after{right:-29px;width:29px}}',
   '.create-form{background:#fcfcfa;border:1px solid var(--rule);border-radius:8px;margin:10px 18px;padding:12px 14px}',
   '.create-form .field-label{margin-top:8px}',
@@ -1320,6 +1333,49 @@ extraStyle.textContent = [
 document.head.appendChild(extraStyle);
 
 var activeTab = 'courts'; // 'courts' | 'tournament'
+
+function closeDetailModal(bg){ if(bg && bg.parentNode) bg.parentNode.removeChild(bg); }
+function showMatchDetail(title, teamA, teamB, result){
+  if(!result) return;
+  var bg=el('div',{className:'detail-modal-bg'}), modal=el('div',{className:'detail-modal'});
+  modal.appendChild(el('h3',{},title||'試合詳細'));
+  modal.appendChild(el('div',{className:'detail-versus'},[
+    el('div',{},teamLabel(teamA||[])), el('div',{},'vs'), el('div',{},teamLabel(teamB||[]))
+  ]));
+  var suffix=result.retired?'（棄権）':(result.voided?'（順位計算除外）':'');
+  modal.appendChild(el('div',{className:'detail-total'},String(result.gameWinsA||0)+' － '+String(result.gameWinsB||0)+' '+suffix));
+  var gs=toArray(result.gameScores);
+  if(gs.length){
+    var t=el('table',{className:'detail-games'});
+    t.appendChild(el('tr',{},[el('th',{},'ゲーム'),el('th',{},teamLabel(teamA||[])),el('th',{},teamLabel(teamB||[]))]));
+    gs.forEach(function(g,idx){
+      var a=(g && g.A!==undefined)?g.A:(g && g.score?g.score.A:'');
+      var b=(g && g.B!==undefined)?g.B:(g && g.score?g.score.B:'');
+      t.appendChild(el('tr',{},[el('td',{},'第'+(idx+1)+'ゲーム'),el('td',{},String(a)),el('td',{},String(b))]));
+    });
+    modal.appendChild(t);
+  }else{
+    modal.appendChild(el('div',{style:{textAlign:'center',color:'var(--ink3)',fontSize:'13px',margin:'8px 0 14px'}},'ゲーム別スコアは記録されていません'));
+  }
+  modal.appendChild(el('div',{style:{textAlign:'center',fontSize:'13px',marginBottom:'14px'}},'合計得点　'+String(result.pointsA||0)+' － '+String(result.pointsB||0)));
+  var close=el('button',{className:'btn btn-outline',style:{width:'100%'}},'閉じる');
+  close.onclick=function(){closeDetailModal(bg);}; modal.appendChild(close);
+  bg.onclick=function(e){if(e.target===bg)closeDetailModal(bg);}; bg.appendChild(modal); document.body.appendChild(bg);
+}
+function showMgpDetail(team, stat){
+  if(!stat) return;
+  var bg=el('div',{className:'detail-modal-bg'}), modal=el('div',{className:'detail-modal'});
+  modal.appendChild(el('h3',{},teamLabel(team||[])+'　M・G・P'));
+  var grid=el('div',{className:'mgp-grid'});
+  function row(k,num,den,rate){ grid.appendChild(el('div',{className:'k'},k)); grid.appendChild(el('div',{className:'v'},num+' / '+den)); grid.appendChild(el('div',{className:'pct'},den?((rate*100).toFixed(1)+'%'):'—')); }
+  row('M',stat.wins,stat.wins+stat.losses,stat.matchRate);
+  row('G',stat.gamesWon,stat.gamesWon+stat.gamesLost,stat.gameRate);
+  row('P',stat.pointsWon,stat.pointsWon+stat.pointsLost,stat.pointRate);
+  modal.appendChild(grid);
+  modal.appendChild(el('div',{style:{fontSize:'12px',color:'var(--ink3)',lineHeight:'1.6',marginBottom:'14px'}},'M＝マッチ勝率、G＝ゲーム率、P＝ポイント率。表示は「獲得数 / 総数」と率です。'));
+  var close=el('button',{className:'btn btn-outline',style:{width:'100%'}},'閉じる'); close.onclick=function(){closeDetailModal(bg);}; modal.appendChild(close);
+  bg.onclick=function(e){if(e.target===bg)closeDetailModal(bg);}; bg.appendChild(modal); document.body.appendChild(bg);
+}
 
 function participantMatchResult(league, i, j){
   var m = toArray(league.matches).filter(function(x){
@@ -1364,15 +1420,20 @@ function buildLeagueCard(eventId, data, league, isAdmin, refreshFn){
         continue;
       }
       var iWon = (m.i===i && m.result.winner==='A') || (m.j===i && m.result.winner==='B');
+      var resultCell;
       if(m.result.retired){
         var iRetired = (m.i===i && m.result.retiredSide==='A') || (m.j===i && m.result.retiredSide==='B');
-        tr.appendChild(el('td',{className: iRetired?'mark-retired':(iWon?'mark-o':'mark-x')}, iRetired?'キ':(iWon?'○':'×')));
+        resultCell=el('td',{className:(iRetired?'mark-retired':(iWon?'mark-o':'mark-x'))+' score-detail-trigger',title:'タップして試合詳細を表示'},iRetired?'キ':(iWon?'○':'×'));
       }else{
-        tr.appendChild(el('td',{className: iWon?'mark-o':'mark-x'}, iWon?'○':'×'));
+        resultCell=el('td',{className:(iWon?'mark-o':'mark-x')+' score-detail-trigger',title:'タップして試合詳細を表示'},iWon?'○':'×');
       }
+      (function(mm){ resultCell.onclick=function(){ showMatchDetail(league.name+' 試合詳細',league.participants[mm.i],league.participants[mm.j],mm.result); }; })(m);
+      tr.appendChild(resultCell);
     }
     var s = statByIdx[i];
-    tr.appendChild(el('td',{}, s ? (s.wins+'-'+s.losses) : ''));
+    var wl=el('td',{className:s?'mgp-trigger':'',title:s?'タップしてM・G・Pを表示':''}, s ? (s.wins+'-'+s.losses) : '');
+    if(s){ (function(team,ss){ wl.onclick=function(){showMgpDetail(team,ss);}; })(league.participants[i],s); }
+    tr.appendChild(wl);
     tr.appendChild(el('td',{}, rankByIdx[i] || (st.needsManualTiebreak?'同率':'')));
     table.appendChild(tr);
   }
@@ -1435,7 +1496,8 @@ function buildBracketCard(data, bracket){
       var aLabel=m.teamA?teamLabel(m.teamA):bracketSlotLabel(data,m.slotA);
       var bLabel=m.teamB?teamLabel(m.teamB):bracketSlotLabel(data,m.slotB);
       if(m.result&&m.result.retired){ if(m.result.retiredSide==='A')aLabel+='（キ）'; if(m.result.retiredSide==='B')bLabel+='（キ）'; }
-      var game=el('div',{className:'tournament-game'+(ri===roundKeys.length-1?' last-round':'')});
+      var game=el('div',{className:'tournament-game'+(ri===roundKeys.length-1?' last-round':'')+(m.result?' score-detail-trigger':''),title:m.result?'タップして試合詳細を表示':''});
+      if(m.result){ (function(mm,aa,bb){ game.onclick=function(){showMatchDetail(bracket.name+' 試合詳細',mm.teamA||[],mm.teamB||[],mm.result);}; })(m,aLabel,bLabel); }
       function teamRow(side,label,hasTeam){
         var won=m.result&&m.result.winner===side;
         var cls='tournament-team'+(won?' winner':'')+(!hasTeam?' pending':'');
