@@ -156,6 +156,24 @@ input:focus,textarea:focus{outline:none}
 .league-award{background:#fcfcfc}
 @media(max-width:600px){.final-results{margin:14px 10px;padding:18px 14px}.final-results-title{font-size:22px}.award-grid{grid-template-columns:1fr}}
 
+
+/* これまでの大会：カード内の文字列も含め、カード全体を一つのタップ領域にする */
+.past-event-card{
+  cursor:pointer;
+  -webkit-user-select:none;
+  user-select:none;
+  -webkit-touch-callout:none;
+  touch-action:manipulation;
+}
+.past-event-card *{
+  pointer-events:none;
+  -webkit-user-select:none;
+  user-select:none;
+}
+.past-event-card:active{
+  transform:scale(.995);
+  opacity:.82;
+}
 </style>
 </head>
 <body>
@@ -1081,7 +1099,7 @@ function mountSetup(){
     pastWrap=el('div',{style:{marginTop:'24px'}});
     pastWrap.appendChild(el('div',{className:'section-title'},'これまでの大会'));
     pastList.forEach(function(ev){
-      var row=el('div',{className:'card',style:{cursor:'pointer'}});
+      var row=el('div',{className:'card past-event-card',style:{cursor:'pointer'}});
       row.appendChild(el('div',{style:{fontWeight:700}},ev.eventName||'（無題）'));
       row.appendChild(el('div',{style:{fontSize:12,color:'var(--ink3)',marginTop:4}},new Date(ev.createdAt).toLocaleString('ja-JP')));
       row.onclick=function(){location.hash='admin:'+ev.eventId;startAdmin(ev.eventId);};
