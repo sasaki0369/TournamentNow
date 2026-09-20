@@ -1372,12 +1372,18 @@ function showMgpDetail(team, stat){
   var bg=el('div',{className:'detail-modal-bg'}), modal=el('div',{className:'detail-modal'});
   modal.appendChild(el('h3',{},teamLabel(team||[])+'　M・G・P'));
   var grid=el('div',{className:'mgp-grid'});
-  function row(k,forNum,againstNum){ grid.appendChild(el('div',{className:'k'},k)); grid.appendChild(el('div',{className:'v'},forNum+' - '+againstNum)); }
+  function row(k,forNum,againstNum){
+    var total=(Number(forNum)||0)+(Number(againstNum)||0);
+    var pct=total>0 ? ((Number(forNum)||0)/total*100) : 0;
+    var pctText=(Math.round(pct*10)/10).toFixed(1).replace(/\.0$/,'')+'%';
+    grid.appendChild(el('div',{className:'k'},k));
+    grid.appendChild(el('div',{className:'v'},forNum+' - '+againstNum+'（'+pctText+'）'));
+  }
   row('M',stat.wins,stat.losses);
   row('G',stat.gamesWon,stat.gamesLost);
   row('P',stat.pointsWon,stat.pointsLost);
   modal.appendChild(grid);
-  modal.appendChild(el('div',{style:{fontSize:'12px',color:'var(--ink3)',lineHeight:'1.6',marginBottom:'14px'}},'左が取った数、右が取られた数です。M＝マッチ、G＝ゲーム、P＝ポイント。'));
+  modal.appendChild(el('div',{style:{fontSize:'12px',color:'var(--ink3)',lineHeight:'1.6',marginBottom:'14px'}},'左が取った数、右が取られた数、括弧内が取得率です。M＝マッチ、G＝ゲーム、P＝ポイント。'));
   var close=el('button',{className:'btn btn-outline',style:{width:'100%'}},'閉じる'); close.onclick=function(){closeDetailModal(bg);}; modal.appendChild(close);
   bg.onclick=function(e){if(e.target===bg)closeDetailModal(bg);}; bg.appendChild(modal); document.body.appendChild(bg);
 }
