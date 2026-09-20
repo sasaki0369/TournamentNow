@@ -1264,7 +1264,7 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs){
 /* ══ CSS: リーグ表・ブラケット表示 ══ */
 var extraStyle = document.createElement('style');
 extraStyle.textContent = [
-  '.tabs{display:flex;border-bottom:1px solid var(--rule);background:#fff}',
+  '.tabs{display:flex;border-bottom:1px solid var(--rule);background:#fff;position:sticky;top:52px;z-index:45;box-shadow:0 1px 0 rgba(0,0,0,.04)}',
   '.tab-btn{flex:1;padding:11px 0;font-size:13px;color:var(--ink3);background:none;border:none;border-bottom:2px solid transparent}',
   '.tab-btn.active{color:var(--ink);border-bottom-color:var(--ink);font-weight:700}',
   '.league-card{background:#fff;border:1px solid var(--rule);border-radius:8px;margin:10px 18px;padding:12px 14px}',
