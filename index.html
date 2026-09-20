@@ -140,6 +140,22 @@ input:focus,textarea:focus{outline:none}
 .viewer-chip{display:inline-flex;align-items:center;gap:5px;background:#eee;color:var(--ink2);border-radius:4px;padding:4px 10px;font-size:12px;font-weight:400;border:1px solid var(--rule);margin-left:10px}
 .spinner{width:36px;height:36px;border:3px solid var(--rule);border-top-color:var(--ink);border-radius:50%;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+.final-results{margin:18px 16px 8px;padding:22px 18px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(180deg,#fff,#fafafa);box-shadow:0 8px 24px rgba(0,0,0,.05)}
+.final-results-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding-bottom:12px}
+.final-results-kicker{font-size:12px;font-weight:800;letter-spacing:.12em;color:var(--ink3)}
+.final-results-title{font-size:26px;font-weight:900;color:var(--ink)}
+.final-results-sub,.final-note{font-size:12px;line-height:1.7;color:var(--ink3);margin-top:10px}
+.final-section-title{font-size:16px;font-weight:900;margin:22px 0 10px}
+.award-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+.award-card{border:1px solid var(--line);border-radius:16px;background:#fff;padding:14px 14px 8px}
+.award-card h3{font-size:14px;margin:0 0 8px;color:var(--ink)}
+.award-row{display:grid;grid-template-columns:58px 1fr;gap:8px;padding:9px 0;border-top:1px solid #eee;align-items:start}
+.award-rank{font-size:12px;font-weight:900;color:var(--ink2);padding-top:2px}
+.award-player{font-size:13px;font-weight:700;line-height:1.55;color:var(--ink)}
+.league-award{background:#fcfcfc}
+@media(max-width:600px){.final-results{margin:14px 10px;padding:18px 14px}.final-results-title{font-size:22px}.award-grid{grid-template-columns:1fr}}
+
 </style>
 </head>
 <body>
@@ -1471,13 +1487,105 @@ function makeReorderable(container, itemSelector, getId, onDone){
   });
 }
 
+
+
+/* ══ 全試合終了後の大会結果サマリー ══ */
+function allTournamentMatchesFinished(data){
+  if(toArray(data.queue).length) return false;
+  var busy = Object.keys(data.courts||{}).some(function(cno){
+    var c=(data.courts||{})[cno];
+    return c && c.match && (c.status==='live' || c.status==='assigned');
+  });
+  if(busy) return false;
+  var leaguePending = Object.keys(data.leagues||{}).some(function(lid){
+    return toArray(data.leagues[lid].matches).some(function(m){ return !m.result; });
+  });
+  if(leaguePending) return false;
+  var bracketPending = Object.keys(data.brackets||{}).some(function(bid){
+    return toArray(data.brackets[bid].matches).some(function(m){ return !m.result; });
+  });
+  return !bracketPending;
+}
+function resultTeamFromSide(m, side){ return side==='A' ? (m.teamA||[]) : (m.teamB||[]); }
+function bracketPlacings(bracket){
+  var matches=toArray(bracket.matches).filter(function(m){return m && m.result && m.teamA && m.teamB;});
+  if(!matches.length) return null;
+  var maxRound=Math.max.apply(null,matches.map(function(m){return m.round||1;}));
+  var finals=matches.filter(function(m){return (m.round||1)===maxRound;});
+  if(finals.length!==1) return null;
+  var f=finals[0], win=f.result.winner, lose=win==='A'?'B':'A';
+  var out={winner:resultTeamFromSide(f,win), runnerUp:resultTeamFromSide(f,lose), thirds:[]};
+  var semis=matches.filter(function(m){return (m.round||1)===maxRound-1;});
+  if(semis.length===2){
+    semis.forEach(function(m){ var ls=m.result.winner==='A'?'B':'A'; out.thirds.push(resultTeamFromSide(m,ls)); });
+  }
+  return out;
+}
+function leaguePlacings(league){
+  var st=computeStandings(league);
+  if(st.needsManualTiebreak || !st.ranking || !st.ranking.length) return null;
+  var byRank={};
+  st.ranking.forEach(function(r){ if(!byRank[r.rank]) byRank[r.rank]=league.participants[r.idx]; });
+  return {winner:byRank[1]||[], runnerUp:byRank[2]||[], thirds:byRank[3]?[byRank[3]]:[]};
+}
+function awardTeamEl(team, clubs){
+  var box=el('div',{className:'award-team'});
+  toArray(team).forEach(function(name){
+    var club=(clubs||{})[name];
+    box.appendChild(el('div',{className:'award-player'},name+(club?'（'+club+'）':'')));
+  });
+  return box;
+}
+function buildFinalResultsSummary(data){
+  var wrap=el('div',{className:'final-results'});
+  wrap.appendChild(el('div',{className:'final-results-head'},[
+    el('div',{className:'final-results-kicker'},'全試合終了'),
+    el('div',{className:'final-results-title'},'大会結果')
+  ]));
+  wrap.appendChild(el('div',{className:'final-results-sub'},'上位入賞者と各リーグ・トーナメントの最終結果です。'));
+
+  var awards=el('div',{className:'award-grid'}), count=0;
+  Object.keys(data.brackets||{}).forEach(function(bid){
+    var br=data.brackets[bid], pl=bracketPlacings(br); if(!pl) return;
+    var card=el('div',{className:'award-card'}); card.appendChild(el('h3',{},br.name));
+    [['優勝',pl.winner],['準優勝',pl.runnerUp]].forEach(function(x){
+      card.appendChild(el('div',{className:'award-row'},[el('div',{className:'award-rank'},x[0]),awardTeamEl(x[1],data.playerClubs)]));
+    });
+    if(pl.thirds.length){
+      var teams=el('div'); pl.thirds.forEach(function(t){teams.appendChild(awardTeamEl(t,data.playerClubs));});
+      card.appendChild(el('div',{className:'award-row'},[el('div',{className:'award-rank'},'3位'),teams]));
+    }
+    awards.appendChild(card); count++;
+  });
+  /* 決勝トーナメントがない大会・種目でも上位を確認できるようリーグ単独結果も掲載 */
+  Object.keys(data.leagues||{}).forEach(function(lid){
+    var lg=data.leagues[lid], pl=leaguePlacings(lg); if(!pl) return;
+    var card=el('div',{className:'award-card league-award'}); card.appendChild(el('h3',{},lg.name));
+    [['1位',pl.winner],['2位',pl.runnerUp],['3位',pl.thirds[0]||[]]].forEach(function(x){
+      if(!toArray(x[1]).length) return;
+      card.appendChild(el('div',{className:'award-row'},[el('div',{className:'award-rank'},x[0]),awardTeamEl(x[1],data.playerClubs)]));
+    });
+    awards.appendChild(card); count++;
+  });
+  if(count){
+    wrap.appendChild(el('div',{className:'final-section-title'},'上位入賞者'));
+    wrap.appendChild(awards);
+  }
+  wrap.appendChild(el('div',{className:'final-note'},'下に各リーグの勝敗・順位と、決勝トーナメントの全対戦結果を掲載しています。'));
+  return wrap;
+}
+
 function buildTournamentView(eventId, data, isAdmin){
   var wrap = el('div');
   var leagues = data.leagues || {};
   var brackets = data.brackets || {};
   function refresh(){ /* Firebaseの.on('value')経由で自動的に再描画されるため何もしなくてよい */ }
 
-  wrap.appendChild(el('div',{className:'section-label'},'リーグ表'));
+  if(allTournamentMatchesFinished(data)){
+    wrap.appendChild(buildFinalResultsSummary(data));
+  }
+
+  wrap.appendChild(el('div',{className:'section-label'},'リーグ結果'));
   if(isAdmin){
     var detection = autoDetectLeaguesFromQueue(data);
     if(detection.candidateGroups.length > 0){
@@ -1535,7 +1643,7 @@ function buildTournamentView(eventId, data, isAdmin){
     });
   }
 
-  wrap.appendChild(el('div',{className:'section-label'},'決勝トーナメント'));
+  wrap.appendChild(el('div',{className:'section-label'},allTournamentMatchesFinished(data)?'トーナメント結果':'決勝トーナメント'));
   if(Object.keys(brackets).length===0){
     wrap.appendChild(el('div',{style:{padding:'10px 18px',color:'var(--ink3)',fontSize:13}},'まだブラケットがありません。'));
   }
