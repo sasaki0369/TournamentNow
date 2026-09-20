@@ -2334,7 +2334,7 @@ function buildWithdrawalManager(eventId, data){
   var baseUrl = (data.badoruBaseUrl||DEFAULT_BADORU_URL).replace(/\/?$/, '/');
   for(var i=1;i<=courtCount;i++){
     (function(courtNo){
-      var link = baseUrl + '?taikaEvent=' + encodeURIComponent(eventId) + '&court=' + courtNo;
+      var link = baseUrl + '?taikaEvent=' + encodeURIComponent(eventId) + '&court=' + courtNo + '&fullscreen=1';
       var copyBtn = el('button',{className:'pill-btn'},'コピー');
       copyBtn.onclick=function(){
         try{navigator.clipboard.writeText(link);}catch(e){}
