@@ -1071,11 +1071,32 @@ function dispatchNextToCourt(eventId,courtNo){
   });
 }
 
+/* ══ コート使用終了／再開：終盤に使わないコートを予測・配信対象から外す ══ */
+function setCourtActive(eventId,courtNo,active){
+  var ref=dbRef(eventId);
+  return ref.transaction(function(cur){
+    if(!cur)return cur;
+    var courts=Object.assign({},cur.courts||{});
+    var key=String(courtNo);
+    var court=courts[key]||{status:'idle',match:null,live:null,lastResult:null};
+    // 試合が入っている最中は使用終了にしない
+    if(!active && (court.match || court.status==='live' || court.status==='assigned')) return cur;
+    courts[key]=Object.assign({},court,{
+      status:active?'idle':'inactive',
+      match:null,
+      live:null,
+      assignedAt:null,
+      startedAt:null
+    });
+    return Object.assign({},cur,{courts:courts});
+  });
+}
+
 /* ══ コートカード描画 ══ */
 function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue){
   court=court||{status:'idle'};
-  var statusClass=court.status==='live'?'live':(court.status==='assigned'?'assigned':'idle');
-  var statusLabel=court.status==='live'?'進行中':(court.status==='assigned'?'配信済み・開始待ち':'空き');
+  var statusClass=court.status==='live'?'live':(court.status==='assigned'?'assigned':(court.status==='inactive'?'inactive':'idle'));
+  var statusLabel=court.status==='live'?'進行中':(court.status==='assigned'?'配信済み・開始待ち':(court.status==='inactive'?'使用終了':'空き'));
   var card=el('div',{className:'court-card st-'+statusClass});
   card.appendChild(el('div',{className:'court-no'},'コート '+courtNo));
   var statusChildren=[el('span',{className:'court-dot '+(statusClass==='live'?'live':'')}), statusLabel];
@@ -1087,7 +1108,17 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue){
     statusChildren.push(el('span',{className:'court-elapsed'},'経過 '+elapsedMin+':'+String(elapsedSec).padStart(2,'0')));
   }
   card.appendChild(el('div',{className:'court-status '+statusClass},statusChildren));
-  if(court.status==='idle'||!court.match){
+  if(court.status==='inactive'){
+    card.appendChild(el('div',{className:'court-idle-msg'},'このコートは配信・予測の対象外です'));
+    if(isAdmin){
+      var resumeBtn=el('button',{className:'court-resume-btn'},'使用再開');
+      resumeBtn.onclick=function(){
+        resumeBtn.disabled=true; resumeBtn.textContent='変更中…';
+        setCourtActive(eventId,courtNo,true).catch(function(e){console.error(e);alert('コートの使用再開に失敗しました');});
+      };
+      card.appendChild(resumeBtn);
+    }
+  }else if(court.status==='idle'||!court.match){
     card.appendChild(el('div',{className:'court-idle-msg'},'次の試合待ち'));
     if(isAdmin){
       var dispatchBtn=el('button',{className:'court-dispatch-btn',disabled:!hasQueue},hasQueue?'配信':'待機中');
@@ -1096,6 +1127,13 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue){
         dispatchNextToCourt(eventId,courtNo).catch(function(e){console.error(e);alert('配信に失敗しました');});
       };
       card.appendChild(dispatchBtn);
+      var stopBtn=el('button',{className:'court-stop-btn'},'このコートの使用を終了');
+      stopBtn.onclick=function(){
+        if(!confirm('コート '+courtNo+' を使用終了にしますか？\n待機キューの予測計算からも除外されます。'))return;
+        stopBtn.disabled=true; stopBtn.textContent='変更中…';
+        setCourtActive(eventId,courtNo,false).catch(function(e){console.error(e);alert('コートの使用終了に失敗しました');});
+      };
+      card.appendChild(stopBtn);
     }
   }else{
     var m=court.match;
@@ -1138,6 +1176,12 @@ extraStyle.textContent = [
   '.court-live-time,.court-elapsed{font-family:var(--mono);font-size:10px;font-weight:500;white-space:nowrap;color:var(--ink2)}',
   '.court-dispatch-btn{width:100%;margin-top:10px;padding:11px 14px;border:0;border-radius:7px;background:#111827;color:#fff;font-size:14px;font-weight:800;cursor:pointer}',
   '.court-dispatch-btn:disabled{background:#d1d5db;color:#6b7280;cursor:default}',
+  '.court-card.st-inactive{background:#f3f4f6;border-color:#d1d5db;opacity:.88}',
+  '.court-status.inactive{background:#e5e7eb;color:#4b5563}',
+  '.court-stop-btn,.court-resume-btn{width:100%;margin-top:7px;padding:9px 12px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer}',
+  '.court-stop-btn{background:#fff;color:#6b7280;border:1px solid #d1d5db}',
+  '.court-resume-btn{background:#fff;color:#111827;border:1px solid #9ca3af}',
+  '.court-stop-btn:disabled,.court-resume-btn:disabled{opacity:.55;cursor:default}',
   '.court-elapsed{color:var(--accent);font-weight:700}',
   '@keyframes liveBlink{0%,100%{opacity:1}50%{opacity:.3}}',
   '.live-legend{font-size:11px;color:var(--ink3);margin-top:6px;display:flex;align-items:center}',
@@ -1948,6 +1992,8 @@ function estimateByRecent20(data, queueSortedList){
   var courtFreeAt = [];
   for(var i=1;i<=courtCount;i++){
     var c = (data.courts||{})[String(i)];
+    // 使用終了コートは配信対象だけでなく予測上のコート数からも除外する
+    if(c && c.status==='inactive') continue;
     if(c && c.match && (c.status==='live' || c.status==='assigned')){
       var baseAt = c.assignedAt || now;
       var elapsed = now - baseAt;
@@ -1957,6 +2003,7 @@ function estimateByRecent20(data, queueSortedList){
       courtFreeAt.push(now);
     }
   }
+  if(!courtFreeAt.length) return {};
   var map = {};
   queueSortedList.forEach(function(m){
     var minIdx = 0;
