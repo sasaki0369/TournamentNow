@@ -1536,9 +1536,14 @@ function bracketPlacings(bracket){
   if(finals.length!==1) return null;
   var f=finals[0], win=f.result.winner, lose=win==='A'?'B':'A';
   var out={winner:resultTeamFromSide(f,win), runnerUp:resultTeamFromSide(f,lose), thirds:[]};
-  var semis=matches.filter(function(m){return (m.round||1)===maxRound-1;});
-  if(semis.length===2){
-    semis.forEach(function(m){ var ls=m.result.winner==='A'?'B':'A'; out.thirds.push(resultTeamFromSide(m,ls)); });
+  var prev=matches.filter(function(m){return (m.round||1)===maxRound-1;});
+  if(prev.length===2){
+    // 通常の4組決勝T：準決勝敗者2組を同率3位とする。
+    prev.forEach(function(m){ var ls=m.result.winner==='A'?'B':'A'; out.thirds.push(resultTeamFromSide(m,ls)); });
+  }else if(prev.length===1 && maxRound>1){
+    // 3組決勝T（1組が決勝シード）：1回戦の敗者が3位。
+    var m=prev[0], ls=m.result.winner==='A'?'B':'A';
+    out.thirds.push(resultTeamFromSide(m,ls));
   }
   return out;
 }
@@ -1548,6 +1553,43 @@ function leaguePlacings(league){
   var byRank={};
   st.ranking.forEach(function(r){ if(!byRank[r.rank]) byRank[r.rank]=league.participants[r.idx]; });
   return {winner:byRank[1]||[], runnerUp:byRank[2]||[], thirds:byRank[3]?[byRank[3]]:[]};
+}
+
+/* 上位入賞者は「種目全体」だけを表示する。
+   ブロックリーグや2位/3位順位決定戦を独立した入賞種目として扱わない。 */
+function finalAwardSources(data){
+  var leagues=data.leagues||{}, brackets=data.brackets||{};
+  var defs=[
+    {title:'AⅠランク', league:/^A1$/i},
+    {title:'AⅡランク', bracket:/^AIIランク決勝T$/i},
+    {title:'BⅠランク', league:/^B1$/i},
+    {title:'BⅡランク', bracket:/^BIIランク決勝T$/i},
+    {title:'CⅠランク', bracket:/^CIランク決勝$/i},
+    {title:'CⅡランク', bracket:/^CIIランク決勝T$/i},
+    {title:'DⅠランク', league:/^D1$/i},
+    {title:'DⅡランク', bracket:/^DIIランク決勝T$/i},
+    {title:'Eランク', bracket:/^Eランク決勝T$/i},
+    {title:'Fランク', bracket:/^Fランク決勝$/i}
+  ];
+  var out=[];
+  defs.forEach(function(d){
+    var src=null, pl=null;
+    if(d.bracket){
+      Object.keys(brackets).some(function(id){
+        if(d.bracket.test(brackets[id].name||'')){ src=brackets[id]; return true; }
+        return false;
+      });
+      if(src) pl=bracketPlacings(src);
+    }else{
+      Object.keys(leagues).some(function(id){
+        if(d.league.test(leagues[id].name||'')){ src=leagues[id]; return true; }
+        return false;
+      });
+      if(src) pl=leaguePlacings(src);
+    }
+    if(pl) out.push({title:d.title, placings:pl});
+  });
+  return out;
 }
 function awardTeamEl(team, clubs){
   var box=el('div',{className:'award-team'});
@@ -1566,26 +1608,17 @@ function buildFinalResultsSummary(data){
   wrap.appendChild(el('div',{className:'final-results-sub'},'上位入賞者と各リーグ・トーナメントの最終結果です。'));
 
   var awards=el('div',{className:'award-grid'}), count=0;
-  Object.keys(data.brackets||{}).forEach(function(bid){
-    var br=data.brackets[bid], pl=bracketPlacings(br); if(!pl) return;
-    var card=el('div',{className:'award-card'}); card.appendChild(el('h3',{},br.name));
+  finalAwardSources(data).forEach(function(item){
+    var pl=item.placings;
+    var card=el('div',{className:'award-card'}); card.appendChild(el('h3',{},item.title));
     [['優勝',pl.winner],['準優勝',pl.runnerUp]].forEach(function(x){
-      card.appendChild(el('div',{className:'award-row'},[el('div',{className:'award-rank'},x[0]),awardTeamEl(x[1],data.playerClubs)]));
-    });
-    if(pl.thirds.length){
-      var teams=el('div'); pl.thirds.forEach(function(t){teams.appendChild(awardTeamEl(t,data.playerClubs));});
-      card.appendChild(el('div',{className:'award-row'},[el('div',{className:'award-rank'},'3位'),teams]));
-    }
-    awards.appendChild(card); count++;
-  });
-  /* 決勝トーナメントがない大会・種目でも上位を確認できるようリーグ単独結果も掲載 */
-  Object.keys(data.leagues||{}).forEach(function(lid){
-    var lg=data.leagues[lid], pl=leaguePlacings(lg); if(!pl) return;
-    var card=el('div',{className:'award-card league-award'}); card.appendChild(el('h3',{},lg.name));
-    [['1位',pl.winner],['2位',pl.runnerUp],['3位',pl.thirds[0]||[]]].forEach(function(x){
       if(!toArray(x[1]).length) return;
       card.appendChild(el('div',{className:'award-row'},[el('div',{className:'award-rank'},x[0]),awardTeamEl(x[1],data.playerClubs)]));
     });
+    if(pl.thirds && pl.thirds.length){
+      var teams=el('div'); pl.thirds.forEach(function(t){teams.appendChild(awardTeamEl(t,data.playerClubs));});
+      card.appendChild(el('div',{className:'award-row'},[el('div',{className:'award-rank'},'3位'),teams]));
+    }
     awards.appendChild(card); count++;
   });
   if(count){
