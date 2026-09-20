@@ -1136,6 +1136,30 @@ function dispatchNextToCourt(eventId,courtNo){
   });
 }
 
+/* ══ 配信取りやめ：開始前の試合を待機キューへ戻す ══ */
+function cancelCourtDispatch(eventId,courtNo){
+  var ref=dbRef(eventId);
+  return ref.transaction(function(cur){
+    if(!cur)return cur;
+    var courts=Object.assign({},cur.courts||{});
+    var key=String(courtNo);
+    var court=courts[key];
+    // 進行中の試合は大会Nowから直接取り消さない。
+    // バドるで「開始取消」して assigned に戻してから配信を取りやめる。
+    if(!court || court.status!=='assigned' || !court.match)return cur;
+    var returned=court.match;
+    var queue=toArray(cur.queue).slice();
+    var rid=returned.id||returned.matchCode||null;
+    var exists=queue.some(function(q){
+      var qid=q&&(q.id||q.matchCode||null);
+      return rid ? qid===rid : JSON.stringify(q)===JSON.stringify(returned);
+    });
+    if(!exists)queue.push(returned);
+    courts[key]=Object.assign({},court,{status:'idle',match:null,live:null,assignedAt:null,startedAt:null,updatedAt:Date.now()});
+    return Object.assign({},cur,{queue:queue,courts:courts,updatedAt:Date.now()});
+  });
+}
+
 /* ══ コート使用終了／再開：終盤に使わないコートを予測・配信対象から外す ══ */
 function setCourtActive(eventId,courtNo,active){
   var ref=dbRef(eventId);
@@ -1209,6 +1233,18 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs){
       teamLabelWithClubs(m.teamA,playerClubs||{}),el('span',{className:'court-vs'},'vs'),teamLabelWithClubs(m.teamB,playerClubs||{})
     ]));
     if(m.matchCode)card.appendChild(el('div',{className:'court-code'},m.matchCode));
+    if(isAdmin && court.status==='assigned'){
+      var cancelDispatchBtn=el('button',{className:'court-cancel-dispatch-btn'},'配信取りやめ');
+      cancelDispatchBtn.onclick=function(){
+        if(!confirm('コート '+courtNo+' への配信を取りやめますか？\nこの試合は待機キューへ戻ります。'))return;
+        cancelDispatchBtn.disabled=true; cancelDispatchBtn.textContent='取消中…';
+        cancelCourtDispatch(eventId,courtNo).catch(function(e){
+          console.error(e); alert('配信の取りやめに失敗しました');
+          if(document.body.contains(cancelDispatchBtn)){cancelDispatchBtn.disabled=false;cancelDispatchBtn.textContent='配信取りやめ';}
+        });
+      };
+      card.appendChild(cancelDispatchBtn);
+    }
     if(court.status==='live'&&court.live){
       card.appendChild(el('div',{className:'court-score'},fmtScore(court.live)));
       if(typeof court.live.gameWinsA==='number'){
@@ -1244,6 +1280,8 @@ extraStyle.textContent = [
   '.court-live-time,.court-elapsed{font-family:var(--mono);font-size:10px;font-weight:500;white-space:nowrap;color:var(--ink2)}',
   '.court-dispatch-btn{width:100%;margin-top:10px;padding:11px 14px;border:0;border-radius:7px;background:#111827;color:#fff;font-size:14px;font-weight:800;cursor:pointer}',
   '.court-dispatch-btn:disabled{background:#d1d5db;color:#6b7280;cursor:default}',
+  '.court-cancel-dispatch-btn{width:100%;margin-top:10px;padding:10px 14px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#4b5563;font-size:13px;font-weight:800;cursor:pointer}',
+  '.court-cancel-dispatch-btn:disabled{opacity:.55;cursor:default}',
   '.court-card.st-inactive{background:#f3f4f6;border-color:#d1d5db;opacity:.88}',
   '.court-status.inactive{background:#e5e7eb;color:#4b5563}',
   '.court-stop-btn,.court-resume-btn{width:100%;margin-top:7px;padding:9px 12px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer}',
