@@ -722,7 +722,7 @@ function watchAndDispatch(eventId){
    リーグ・ブラケット・キュー・コート状況をすべて含む1枚のCSVとして書き出し／読み込みする */
 var EXPORT_HEADER = ['section','groupName','matchIndex','round','matchCode','time','type',
   'teamA1','teamA2','teamB1','teamB2','slotAType','slotAValue','slotBType','slotBValue',
-  'status','courtNo','winner','gameWinsA','gameWinsB','pointsA','pointsB'];
+  'status','courtNo','winner','gameWinsA','gameWinsB','pointsA','pointsB','gameScores'];
 
 function csvCell(v){
   v = (v===null||v===undefined) ? '' : String(v);
@@ -766,7 +766,7 @@ function exportProgressCsv(data){
       rows.push(['league', lg.name, m.id, '', '', '', lg.type||'singles',
         a[0]||'',a[1]||'', b[0]||'',b[1]||'', '','','','',
         status, courtNo||'', m.result?m.result.winner:'', m.result?m.result.gameWinsA:'', m.result?m.result.gameWinsB:'',
-        m.result?m.result.pointsA:'', m.result?m.result.pointsB:'']);
+        m.result?m.result.pointsA:'', m.result?m.result.pointsB:'', m.result&&m.result.gameScores?JSON.stringify(m.result.gameScores):'']);
     });
   });
   var brackets = data.brackets || {};
@@ -780,7 +780,7 @@ function exportProgressCsv(data){
       rows.push(['bracket', br.name, m.id, m.round||1, '', '', (a.length>1||b.length>1)?'doubles':'singles',
         a[0]||'',a[1]||'', b[0]||'',b[1]||'', sa[0],sa[1],sb[0],sb[1],
         status, courtNo||'', m.result?m.result.winner:'', m.result?m.result.gameWinsA:'', m.result?m.result.gameWinsB:'',
-        m.result?m.result.pointsA:'', m.result?m.result.pointsB:'']);
+        m.result?m.result.pointsA:'', m.result?m.result.pointsB:'', m.result&&m.result.gameScores?JSON.stringify(m.result.gameScores):'']);
     });
   });
   // 「リーグ／ブラケットに属さない試合」で、既にコートに割り当て済みのものは
@@ -810,6 +810,11 @@ function exportProgressCsv(data){
   return rows.map(function(r){ return r.map(csvCell).join(','); }).join('\n');
 }
 
+
+function parseGameScoresCsv(v){
+  if(!v) return [];
+  try{ var a=JSON.parse(v); return Array.isArray(a)?a:[]; }catch(e){ return []; }
+}
 
 function parseProgressCsv(text){
   var lines = text.split(/\r?\n/).map(function(l){return l;}).filter(function(l){return l.trim()!=='';});
@@ -855,7 +860,7 @@ function parseProgressCsv(text){
     var matches = grows.map(function(r){
       var i = idxOf(r.teamA1, r.teamA2);
       var j = idxOf(r.teamB1, r.teamB2);
-      var result = r.status==='done' ? { winner:r.winner, gameWinsA:Number(r.gameWinsA)||0, gameWinsB:Number(r.gameWinsB)||0, pointsA:Number(r.pointsA)||0, pointsB:Number(r.pointsB)||0 } : null;
+      var result = r.status==='done' ? { winner:r.winner, gameWinsA:Number(r.gameWinsA)||0, gameWinsB:Number(r.gameWinsB)||0, pointsA:Number(r.pointsA)||0, pointsB:Number(r.pointsB)||0, gameScores:parseGameScoresCsv(r.gameScores) } : null;
       return { id:Number(r.matchIndex)||0, i:i, j:j, result:result, _status:r.status, _courtNo:r.courtNo };
     });
     leagues[lid] = { id:lid, name:name, type: (grows[0]&&grows[0].type)||'singles', participants:participants,
@@ -902,7 +907,7 @@ function parseProgressCsv(text){
     var matches = grows.map(function(r){
       var teamA = (r.teamA1||r.teamA2) ? [r.teamA1,r.teamA2].filter(Boolean) : null;
       var teamB = (r.teamB1||r.teamB2) ? [r.teamB1,r.teamB2].filter(Boolean) : null;
-      var result = r.status==='done' ? { winner:r.winner, gameWinsA:Number(r.gameWinsA)||0, gameWinsB:Number(r.gameWinsB)||0, pointsA:Number(r.pointsA)||0, pointsB:Number(r.pointsB)||0 } : null;
+      var result = r.status==='done' ? { winner:r.winner, gameWinsA:Number(r.gameWinsA)||0, gameWinsB:Number(r.gameWinsB)||0, pointsA:Number(r.pointsA)||0, pointsB:Number(r.pointsB)||0, gameScores:parseGameScoresCsv(r.gameScores) } : null;
       var queuedAlready = !!(teamA && teamB && (r.status==='court' || r.status==='pending'));
       return {
         id:Number(r.matchIndex)||0, round:Number(r.round)||1,
