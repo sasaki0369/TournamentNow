@@ -1330,7 +1330,27 @@ extraStyle.textContent = [
   '.detail-games{width:100%;border-collapse:collapse;margin:8px 0 14px}',
   '.detail-games th,.detail-games td{border-bottom:1px solid var(--rule);padding:7px 8px;text-align:center;font-size:13px}',
   '.mgp-grid{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center;margin:8px 0 14px}',
-  '.mgp-grid .k{font-weight:900;font-size:16px}.mgp-grid .v{font-family:var(--mono);font-weight:800}',
+  '.mgp-grid .k{font-weight:900;font-size:16px}.mgp-grid .v{font-family:var(--mono);font-weight:800;white-space:nowrap}',
+  /* 小画面で文字を無理に圧縮せず、必要な部分だけ横スクロールさせる */
+  '.standing-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:3px}',
+  '.standing-scroll table.standing{width:max-content;min-width:100%;table-layout:auto}',
+  'table.standing th,table.standing td{min-width:44px;vertical-align:middle}',
+  'table.standing th.team-head,table.standing td.name-cell{min-width:104px;max-width:150px}',
+  '.standing-team{display:flex;flex-direction:column;gap:2px;align-items:center;line-height:1.25}',
+  'td.name-cell .standing-team{align-items:flex-start}',
+  '.standing-player{display:block;white-space:nowrap;word-break:keep-all;overflow-wrap:normal}',
+  'table.standing th:last-child,table.standing td:last-child{min-width:42px}',
+  '.detail-games{table-layout:fixed}',
+  '.detail-games th:first-child,.detail-games td:first-child{width:42px;white-space:nowrap}',
+  '.detail-games th{vertical-align:bottom}',
+  '.detail-games .detail-player{font-size:12px}',
+  '.detail-modal{overscroll-behavior:contain}',
+  '.detail-modal h3{overflow-wrap:anywhere}',
+  '.court-teams{overflow-wrap:anywhere}',
+  '.court-score{white-space:nowrap}',
+  '.award-player{overflow-wrap:anywhere}',
+  '.tournament-team>span:first-child{min-width:0;overflow-wrap:anywhere}',
+  '@media(max-width:520px){.detail-modal-bg{padding:10px}.detail-modal{width:100%;max-height:92dvh;padding:16px 14px}.detail-versus{grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr);gap:5px}.detail-player{font-size:13px}.detail-games th,.detail-games td{padding:7px 4px}.league-card{margin-left:10px;margin-right:10px;padding-left:10px;padding-right:10px}.appbar{padding-left:12px;padding-right:12px}.appbar-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.appbar-right{flex-shrink:0;margin-left:8px}}',
   '@media(max-width:700px){.tournament-tree{gap:28px;padding-left:4px}.tournament-round-col,.tournament-game{min-width:205px;width:205px}.tournament-game:not(.last-round)::after{right:-29px;width:29px}}',
   '.create-form{background:#fcfcfa;border:1px solid var(--rule);border-radius:8px;margin:10px 18px;padding:12px 14px}',
   '.create-form .field-label{margin-top:8px}',
@@ -1346,6 +1366,11 @@ function detailTeam(team){
   var names=(team||[]).filter(Boolean);
   if(!names.length) return el('div',{className:'detail-team'},[el('span',{className:'detail-player'},'（未定）')]);
   return el('div',{className:'detail-team'},names.map(function(name){return el('span',{className:'detail-player'},name);}));
+}
+function standingTeam(team){
+  var names=(team||[]).filter(Boolean);
+  if(!names.length) return el('div',{className:'standing-team'},'');
+  return el('div',{className:'standing-team'},names.map(function(name){return el('span',{className:'standing-player'},name);}));
 }
 function showMatchDetail(title, teamA, teamB, result){
   if(!result) return;
@@ -1409,7 +1434,7 @@ function buildLeagueCard(eventId, data, league, isAdmin, refreshFn){
 
   var table = el('table',{className:'standing'});
   var head = el('tr'); head.appendChild(el('th',{},''));
-  league.participants.forEach(function(p){ head.appendChild(el('th',{},teamLabel(p))); });
+  league.participants.forEach(function(p){ head.appendChild(el('th',{className:'team-head'},standingTeam(p))); });
   head.appendChild(el('th',{},'勝敗')); head.appendChild(el('th',{},'順位'));
   table.appendChild(head);
 
@@ -1422,7 +1447,7 @@ function buildLeagueCard(eventId, data, league, isAdmin, refreshFn){
   var anyLive = false;
   for(var i=0;i<n;i++){
     var tr = el('tr');
-    tr.appendChild(el('td',{className:'name-cell'},teamLabel(league.participants[i])));
+    tr.appendChild(el('td',{className:'name-cell'},standingTeam(league.participants[i])));
     for(var j=0;j<n;j++){
       if(i===j){ tr.appendChild(el('td',{className:'self-cell','aria-label':'同一選手・対戦なし'},'')); continue; }
       var m = participantMatchResult(league, i, j);
@@ -1455,7 +1480,7 @@ function buildLeagueCard(eventId, data, league, isAdmin, refreshFn){
     tr.appendChild(el('td',{}, rankByIdx[i] || (st.needsManualTiebreak?'同率':'')));
     table.appendChild(tr);
   }
-  card.appendChild(table);
+  var standingScroll=el('div',{className:'standing-scroll'}); standingScroll.appendChild(table); card.appendChild(standingScroll);
   if(anyLive){
     card.appendChild(el('div',{className:'live-legend'},[el('span',{className:'live-dot'}),' 進行中（コート番号を表示）']));
   }
