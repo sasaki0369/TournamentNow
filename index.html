@@ -340,8 +340,8 @@ function roundRobinPairs(n){
 }
 
 /* ══ リーグ（総当たり）の順位計算 ══
-   タイブレーク: 勝敗数 → 取得ゲーム率 → 取得ポイント率。
-   これらが全て同率の場合は本部の手動確定(tieOverride)に委ねる。 */
+   順位決定: ①マッチ勝率 → ②取得ゲーム率 → ③取得ポイント率
+             → ④同率者間の直接対決 → ⑤抽選・運営判断（手動確定）。 */
 function computeStandings(league){
   var n = (league.participants||[]).length;
   var stats = (league.participants||[]).map(function(_, idx){
@@ -360,6 +360,8 @@ function computeStandings(league){
     if(m.result.winner==='A'){ a.wins++; b.losses++; } else if(m.result.winner==='B'){ b.wins++; a.losses++; }
   });
   stats.forEach(function(s){
+    var played = s.wins+s.losses;
+    s.matchRate = played>0 ? s.wins/played : 0;
     s.gameRate = (s.gamesWon+s.gamesLost)>0 ? s.gamesWon/(s.gamesWon+s.gamesLost) : 0;
     s.pointRate = (s.pointsWon+s.pointsLost)>0 ? s.pointsWon/(s.pointsWon+s.pointsLost) : 0;
   });
@@ -371,22 +373,41 @@ function computeStandings(league){
     return { complete:true, ranking: order.map(function(idx,i){ return Object.assign({},stats[idx],{rank:i+1}); }) };
   }
 
+  function sameRate(a,b){ return Math.abs(a-b)<1e-10; }
   var sorted = stats.slice().sort(function(x,y){
-    if(y.wins!==x.wins) return y.wins-x.wins;
-    if(y.gameRate!==x.gameRate) return y.gameRate-x.gameRate;
-    if(y.pointRate!==x.pointRate) return y.pointRate-x.pointRate;
+    if(!sameRate(y.matchRate,x.matchRate)) return y.matchRate-x.matchRate;
+    if(!sameRate(y.gameRate,x.gameRate)) return y.gameRate-x.gameRate;
+    if(!sameRate(y.pointRate,x.pointRate)) return y.pointRate-x.pointRate;
     return 0;
   });
-  var groups = {};
-  sorted.forEach(function(s){
-    var key = s.wins+'_'+s.gameRate.toFixed(4)+'_'+s.pointRate.toFixed(4);
-    groups[key] = groups[key]||[]; groups[key].push(s);
-  });
-  var hasTie = Object.keys(groups).some(function(k){ return groups[k].length>1; });
-  if(hasTie) return { complete:true, needsManualTiebreak:true, stats:sorted };
-  return { complete:true, ranking: sorted.map(function(s,i){ return Object.assign({},s,{rank:i+1}); }) };
-}
 
+  // ①～③が同じ選手・ペアをグループ化し、④同率者間の直接対決で順位を決める。
+  var groups=[];
+  sorted.forEach(function(s){
+    var g=groups[groups.length-1];
+    if(g && sameRate(g[0].matchRate,s.matchRate) && sameRate(g[0].gameRate,s.gameRate) && sameRate(g[0].pointRate,s.pointRate)) g.push(s);
+    else groups.push([s]);
+  });
+
+  var unresolved=false, finalOrder=[];
+  groups.forEach(function(group){
+    if(group.length===1){ finalOrder.push(group[0]); return; }
+    var ids={}; group.forEach(function(s){ ids[s.idx]=true; s.headToHeadWins=0; s.headToHeadLosses=0; });
+    matches.forEach(function(m){
+      if(!m.result || m.result.voided || !ids[m.i] || !ids[m.j]) return;
+      var a=group.filter(function(s){return s.idx===m.i;})[0];
+      var b=group.filter(function(s){return s.idx===m.j;})[0];
+      if(m.result.winner==='A'){ a.headToHeadWins++; b.headToHeadLosses++; }
+      else if(m.result.winner==='B'){ b.headToHeadWins++; a.headToHeadLosses++; }
+    });
+    group.sort(function(a,b){ return b.headToHeadWins-a.headToHeadWins; });
+    for(var i=1;i<group.length;i++) if(group[i-1].headToHeadWins===group[i].headToHeadWins) unresolved=true;
+    finalOrder=finalOrder.concat(group);
+  });
+
+  if(unresolved) return { complete:true, needsManualTiebreak:true, stats:finalOrder };
+  return { complete:true, ranking: finalOrder.map(function(s,i){ return Object.assign({},s,{rank:i+1}); }) };
+}
 /* ══ ブラケットのスロット参照解決 ══
    ref: {type:'fixed', names} | {type:'leagueRank', leagueId, rank} | {type:'matchWinner', bracketId, matchId} */
 function resolveSlotRef(data, ref){
@@ -1309,7 +1330,7 @@ function buildLeagueCard(eventId, data, league, isAdmin, refreshFn){
   }
 
   if(st.needsManualTiebreak && isAdmin){
-    var warn = el('div',{className:'tie-warn'},'同率のため順位を手動で確定してください（勝敗・ゲーム率・ポイント率すべて同じ相手がいます）。下の欄に順位順で番号をカンマ区切りで入力してください（例: 2,0,1）。');
+    var warn = el('div',{className:'tie-warn'},'マッチ勝率・ゲーム率・ポイント率・直接対決でも順位が決まらないため、抽選または運営判断で順位を確定してください。下の欄に順位順で番号をカンマ区切りで入力してください（例: 2,0,1）。');
     var ord = el('input',{className:'field-inp',placeholder:'例: 2,0,1',style:{marginTop:'8px'}});
     var okBtn = el('button',{className:'btn btn-outline',style:{marginTop:'8px'}},'この順位で確定');
     okBtn.onclick=function(){
