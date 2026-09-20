@@ -1001,6 +1001,10 @@ function mountSetup(){
     dbRef(eventId).set(initial,function(err){
       if(err){errEl.textContent='作成に失敗しました: '+err.message;return;}
       saveEventToList({eventId:eventId,eventName:eventName,createdAt:Date.now()});
+      /* CSV内にリーグ候補がある場合は、通常画面より先にリーグ作成画面を開く。
+         リーグ登録後に設定タブへ進めるため、CSV読み込み直後の作業順が明確になる。 */
+      var leagueDetection = autoDetectLeaguesFromQueue(initial);
+      activeTab = leagueDetection.candidateGroups.length > 0 ? 'tournament' : 'courts';
       location.hash='admin:'+eventId;
       startAdmin(eventId);
     });
@@ -1358,9 +1362,9 @@ function buildTournamentView(eventId, data, isAdmin){
     var detection = autoDetectLeaguesFromQueue(data);
     if(detection.candidateGroups.length > 0){
       var autoBox = el('div',{className:'create-form'});
-      autoBox.appendChild(el('div',{className:'section-title'},'キューの試合コードから自動検出'));
+      autoBox.appendChild(el('div',{className:'section-title'},'リーグを作成'));
       autoBox.appendChild(el('div',{style:{fontSize:12,color:'var(--ink3)',marginBottom:8}},
-        '試合コードの末尾番号（例: A2-A-1〜A2-A-6）から、同じブロックの試合をまとめてリーグ化できます。'));
+        'CSVからリーグ戦と思われるグループを検出しました。内容を確認し、作成するリーグを選択してください。'));
       var checks = [];
       detection.candidateGroups.forEach(function(g){
         var row = el('label',{style:{display:'flex',alignItems:'center',gap:'8px',fontSize:13,marginBottom:'6px'}});
@@ -1377,7 +1381,10 @@ function buildTournamentView(eventId, data, isAdmin){
         if(selected.length===0){ return; }
         var result = buildLeaguesFromGroups(data, selected);
         dbRef(eventId).update({ leagues: result.leagues, queue: result.queue, courts: result.courts })
-          .then(function(){ detectMsg.textContent = selected.length+'件のリーグを登録しました。'; })
+          .then(function(){
+            detectMsg.textContent = selected.length+'件のリーグを登録しました。設定画面へ移動します。';
+            activeTab = 'settings';
+          })
           .catch(function(e){ detectMsg.className='err'; detectMsg.textContent='失敗: '+e.message; });
       };
       autoBox.appendChild(detectBtn); autoBox.appendChild(detectMsg);
