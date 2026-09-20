@@ -1121,7 +1121,7 @@ function setCourtActive(eventId,courtNo,active){
 }
 
 /* ══ コートカード描画 ══ */
-function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue){
+function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs){
   court=court||{status:'idle'};
   var statusClass=court.status==='live'?'live':(court.status==='assigned'?'assigned':(court.status==='inactive'?'inactive':'idle'));
   var statusLabel=court.status==='live'?'進行中':(court.status==='assigned'?'配信済み・開始待ち':(court.status==='inactive'?'使用終了':'空き'));
@@ -1152,7 +1152,10 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue){
       var dispatchBtn=el('button',{className:'court-dispatch-btn',disabled:!hasQueue},hasQueue?'配信':'待機中');
       dispatchBtn.onclick=function(){
         dispatchBtn.disabled=true; dispatchBtn.textContent='配信中…';
-        dispatchNextToCourt(eventId,courtNo).catch(function(e){console.error(e);alert('配信に失敗しました');});
+        dispatchNextToCourt(eventId,courtNo).then(function(){
+          // DB更新時はvalue監視で再描画される。更新対象が無かった場合もボタンを復帰させる。
+          if(document.body.contains(dispatchBtn)){ dispatchBtn.disabled=false; dispatchBtn.textContent='配信'; }
+        }).catch(function(e){console.error(e); if(document.body.contains(dispatchBtn)){dispatchBtn.disabled=false;dispatchBtn.textContent='配信';} alert('配信に失敗しました');});
       };
       card.appendChild(dispatchBtn);
       var stopBtn=el('button',{className:'court-stop-btn'},'このコートの使用を終了');
@@ -1166,7 +1169,7 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue){
   }else{
     var m=court.match;
     card.appendChild(el('div',{className:'court-teams'},[
-      teamLabelWithClubs(m.teamA,data.playerClubs),el('span',{className:'court-vs'},'vs'),teamLabelWithClubs(m.teamB,data.playerClubs)
+      teamLabelWithClubs(m.teamA,playerClubs||{}),el('span',{className:'court-vs'},'vs'),teamLabelWithClubs(m.teamB,playerClubs||{})
     ]));
     if(m.matchCode)card.appendChild(el('div',{className:'court-code'},m.matchCode));
     if(court.status==='live'&&court.live){
@@ -2215,7 +2218,7 @@ function mountProgress(eventId,data,role){
   var grid=el('div',{className:'court-grid'});
   var courtCount=data.courtCount||0;
   for(var i=1;i<=courtCount;i++){
-    grid.appendChild(buildCourtCard(i,(data.courts||{})[String(i)],eventId,isAdmin,toArray(data.queue).length>0));
+    grid.appendChild(buildCourtCard(i,(data.courts||{})[String(i)],eventId,isAdmin,toArray(data.queue).length>0,data.playerClubs||{}));
   }
   root.appendChild(grid);
 
