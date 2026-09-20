@@ -655,8 +655,9 @@ function computeDispatch(data){
   var d1 = applyPendingResults(data);
   var d1b = applyWithdrawals(d1);
   var d2 = resolveBracketsIntoQueue(d1b);
-  var d3 = assignIdleCourts(d2);
-  return d3;
+  // コートへの配信は大会運営者がコート状況画面の『配信』ボタンで行う。
+  // 結果反映・棄権処理・ブラケット解決までは自動、コート割当は手動。
+  return d2;
 }
 
 /* ══ 管理者クライアントでのディスパッチ監視 ══
@@ -1036,8 +1037,42 @@ function mountSetup(){
   render(root);
 }
 
+/* ══ 手動配信：運営者がコールするタイミングで空きコートへ次試合を送る ══ */
+function dispatchNextToCourt(eventId,courtNo){
+  var ref=dbRef(eventId);
+  return ref.transaction(function(cur){
+    if(!cur)return cur;
+    // 配信直前にも結果・棄権・勝ち上がりを最新化するが、自動割当はしない
+    var data=resolveBracketsIntoQueue(applyWithdrawals(applyPendingResults(cur)));
+    var courts=Object.assign({},data.courts||{});
+    var key=String(courtNo);
+    var court=courts[key]||{status:'idle',match:null,live:null,lastResult:null};
+    if(court.status!=='idle' || court.match)return data;
+    var queue=toArray(data.queue).slice();
+    if(!queue.length)return data;
+    var playing=playingTeamNames(courts);
+    // CSV予定時刻の早い試合から、他コートと選手が重複しない試合を選ぶ
+    var view=queue.slice().sort(function(a,b){
+      var ma=timeToMinutes(a.time),mb=timeToMinutes(b.time);
+      if(ma===null&&mb===null)return 0;if(ma===null)return 1;if(mb===null)return -1;return ma-mb;
+    });
+    var picked=null;
+    for(var i=0;i<view.length;i++){
+      var names=toArray(view[i].teamA).concat(toArray(view[i].teamB));
+      if(!names.some(function(n){return n&&playing[n];})){picked=view[i];break;}
+    }
+    if(!picked)return data;
+    var idx=queue.findIndex(function(q){return q.id===picked.id;});
+    if(idx<0)idx=queue.indexOf(picked);
+    if(idx<0)return data;
+    queue.splice(idx,1);
+    courts[key]=Object.assign({},court,{status:'assigned',match:picked,live:null,assignedAt:Date.now(),startedAt:null});
+    return Object.assign({},data,{queue:queue,courts:courts});
+  });
+}
+
 /* ══ コートカード描画 ══ */
-function buildCourtCard(courtNo,court){
+function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue){
   court=court||{status:'idle'};
   var statusClass=court.status==='live'?'live':(court.status==='assigned'?'assigned':'idle');
   var statusLabel=court.status==='live'?'進行中':(court.status==='assigned'?'配信済み・開始待ち':'空き');
@@ -1054,6 +1089,14 @@ function buildCourtCard(courtNo,court){
   card.appendChild(el('div',{className:'court-status '+statusClass},statusChildren));
   if(court.status==='idle'||!court.match){
     card.appendChild(el('div',{className:'court-idle-msg'},'次の試合待ち'));
+    if(isAdmin){
+      var dispatchBtn=el('button',{className:'court-dispatch-btn',disabled:!hasQueue},hasQueue?'配信':'待機中');
+      dispatchBtn.onclick=function(){
+        dispatchBtn.disabled=true; dispatchBtn.textContent='配信中…';
+        dispatchNextToCourt(eventId,courtNo).catch(function(e){console.error(e);alert('配信に失敗しました');});
+      };
+      card.appendChild(dispatchBtn);
+    }
   }else{
     var m=court.match;
     card.appendChild(el('div',{className:'court-teams'},[
@@ -1093,6 +1136,8 @@ extraStyle.textContent = [
   '.live-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:3px;animation:liveBlink 1.2s infinite}',
   '.court-status{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
   '.court-live-time,.court-elapsed{font-family:var(--mono);font-size:10px;font-weight:500;white-space:nowrap;color:var(--ink2)}',
+  '.court-dispatch-btn{width:100%;margin-top:10px;padding:11px 14px;border:0;border-radius:7px;background:#111827;color:#fff;font-size:14px;font-weight:800;cursor:pointer}',
+  '.court-dispatch-btn:disabled{background:#d1d5db;color:#6b7280;cursor:default}',
   '.court-elapsed{color:var(--accent);font-weight:700}',
   '@keyframes liveBlink{0%,100%{opacity:1}50%{opacity:.3}}',
   '.live-legend{font-size:11px;color:var(--ink3);margin-top:6px;display:flex;align-items:center}',
@@ -2095,7 +2140,7 @@ function mountProgress(eventId,data,role){
   var grid=el('div',{className:'court-grid'});
   var courtCount=data.courtCount||0;
   for(var i=1;i<=courtCount;i++){
-    grid.appendChild(buildCourtCard(i,(data.courts||{})[String(i)]));
+    grid.appendChild(buildCourtCard(i,(data.courts||{})[String(i)],eventId,isAdmin,toArray(data.queue).length>0));
   }
   root.appendChild(grid);
 
