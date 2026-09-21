@@ -194,6 +194,7 @@ input:focus,textarea:focus{outline:none}
 .demo-guide-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
 .demo-guide-actions .btn{flex:1;min-width:120px;}
 @media(max-width:520px){.demo-guide{margin:8px}.demo-guide-actions .btn{min-width:0}.demo-guide-text{font-size:12px}}
+.demo-badoru-stage{position:fixed;inset:0;z-index:1000;background:#111;display:flex;flex-direction:column}.demo-badoru-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:#0f172a;color:#fff}.demo-badoru-head strong{font-size:15px}.demo-badoru-head span{font-size:12px;opacity:.82}.demo-badoru-frame{border:0;width:100%;flex:1;background:#fff}.demo-badoru-next{margin-left:auto;white-space:nowrap;background:#2563eb;color:#fff;border:0;border-radius:8px;padding:9px 14px;font-weight:800}
 </style>
 </head>
 <body>
@@ -1140,7 +1141,7 @@ function createDemoEvent(){
     id:'F1',matchCode:'DF1',round:'FINAL',time:'',teamA:null,teamB:null,queued:false,result:null,
     slotA:{type:'leagueRank',leagueId:la,rank:1},slotB:{type:'leagueRank',leagueId:lb,rank:1}
   }]};
-  var initial={eventName:'【デモ】大会Now 体験大会',venueName:'デモ体育館',courtCount:2,createdAt:Date.now(),demoMode:true,
+  var initial={eventName:'【デモ】大会Now 体験大会',venueName:'デモ体育館',courtCount:2,createdAt:Date.now(),demoMode:true,demoStep:0,
     queue:queue,courts:{},leagues:leagues,leagueOrder:[la,lb],brackets:brackets,playerClubs:{'青木 翔':'青空クラブ','石井 蓮':'町田BC','上田 湊':'つばさ','加藤 陽':'若葉会','木村 陸':'シャトルズ','佐藤 蒼':'南クラブ'}};
   dbRef(eventId).set(initial,function(err){
     if(err){alert('デモの開始に失敗しました: '+err.message);return;}
@@ -1149,31 +1150,69 @@ function createDemoEvent(){
   });
 }
 function demoProgressText(data){
-  var leagueDone=Object.keys(data.leagues||{}).reduce(function(n,k){return n+toArray(data.leagues[k].matches).filter(function(m){return !!m.result;}).length;},0);
-  var finalDone=Object.keys(data.brackets||{}).some(function(k){return toArray(data.brackets[k].matches).some(function(m){return !!m.result;});});
-  if(finalDone) return 'デモ完了です。リーグ順位から決勝へ進み、優勝者まで自動反映されました。「リーグ・トーナメント」で最終結果を確認できます。';
-  if(leagueDone>=6) return 'リーグ戦が終了しました。各リーグ1位が決勝トーナメントへ自動で入りました。次のデモ結果で決勝を完了できます。';
-  if(leagueDone>0) return '結果がリーグ表へ反映されています。○×や勝敗欄をタップすると、詳細スコアやM/G/Pも確認できます。';
-  return 'これは本番データに影響しない体験用大会です。「次のデモ結果」を押すと試合が1つずつ進みます。手動で「配信」を試すこともできます。';
+  var step=Number(data.demoStep||0);
+  var texts=[
+    '大会Nowの特徴を、実際の画面を順番に切り替えながら体験します。「デモを進める」を押してください。',
+    'まず「コート状況」です。待機中の試合を空きコートへ配信できます。次はコート1へ試合を配信します。',
+    'コート1へ選手情報が配信されました。次は、同じ大会・コートに連携した「バドる」の画面へ移動します。',
+    'バドるでは大会Nowから選手名・所属・試合情報を受け取り、コートサイドで採点できます。次は試合終了を疑似実行し、大会Nowへ戻ります。',
+    'バドるの結果が大会Nowへ戻ると、コートが空き、結果がリーグ表へ自動反映されます。次はリーグ表を確認します。',
+    'リーグ・トーナメントでは勝敗、詳細スコア、M/G/P、順位、勝ち上がりを確認できます。次は棄権管理を見ます。',
+    '「棄権」では不戦敗の登録・確認・取消を大会進行と分けて管理できます。次は設定・共有機能を見ます。',
+    '「設定」では参加者向け／運営者向け共有、バドる連携、試合ルール、進行データの入出力などを管理できます。次は大会を最後まで自動進行します。',
+    'リーグ戦の結果から順位を決め、各リーグ1位が決勝へ進みます。最終結果まで自動反映される流れを確認してください。',
+    'デモ完了です。コート配信→バドる採点→結果反映→順位決定→決勝まで、大会運営の一連の流れを体験しました。'
+  ];
+  return texts[Math.min(step,texts.length-1)];
+}
+function demoFinishOne(cur){
+  cur=applyPendingResults(cur); cur=resolveBracketsIntoQueue(cur);
+  var q=toArray(cur.queue), m=q[0]; if(!m)return cur;
+  var result={winner:'A',gameWinsA:2,gameWinsB:0,pointsA:42,pointsB:29,gameScores:[{a:21,b:14},{a:21,b:15}]};
+  if(m.refType==='league' && cur.leagues && cur.leagues[m.refId]){
+    var lg=cur.leagues[m.refId], ms=toArray(lg.matches);
+    ms=ms.map(function(x,idx){return idx===m.refMatchIndex?Object.assign({},x,{result:result}):x;});
+    cur.leagues[m.refId]=Object.assign({},lg,{matches:ms});
+  }else if(m.refType==='bracket' && cur.brackets && cur.brackets[m.refId]){
+    var br=cur.brackets[m.refId]; br.matches=toArray(br.matches).map(function(x){return x.id===m.refMatchIndex?Object.assign({},x,{teamA:m.teamA,teamB:m.teamB,result:result}):x;}); cur.brackets[m.refId]=br;
+  }
+  cur.completedMatches=cur.completedMatches||{};
+  cur.completedMatches[m.matchCode]={matchCode:m.matchCode,winner:'A',winnerTeam:m.teamA,teamA:m.teamA,teamB:m.teamB,gameWinsA:2,gameWinsB:0,pointsA:42,pointsB:29,gameScores:result.gameScores,finishedAt:Date.now()};
+  cur.queue=q.slice(1); return resolveBracketsIntoQueue(cur);
 }
 function advanceDemo(eventId){
+  var nextTab=null;
   dbRef(eventId).transaction(function(cur){
-    if(!cur || !cur.demoMode) return cur;
-    cur=applyPendingResults(cur); cur=resolveBracketsIntoQueue(cur);
-    var q=toArray(cur.queue);
-    if(!q.length) return cur;
-    var m=q[0], result={winner:'A',gameWinsA:2,gameWinsB:0,pointsA:42,pointsB:29,gameScores:[{a:21,b:14},{a:21,b:15}]};
-    if(m.refType==='league' && cur.leagues && cur.leagues[m.refId]){
-      var lg=cur.leagues[m.refId], ms=toArray(lg.matches);
-      ms=ms.map(function(x,idx){return idx===m.refMatchIndex?Object.assign({},x,{result:result}):x;});
-      cur.leagues[m.refId]=Object.assign({},lg,{matches:ms});
-    }else if(m.refType==='bracket' && cur.brackets && cur.brackets[m.refId]){
-      var br=cur.brackets[m.refId]; br.matches=toArray(br.matches).map(function(x){return x.id===m.refMatchIndex?Object.assign({},x,{teamA:m.teamA,teamB:m.teamB,result:result}):x;}); cur.brackets[m.refId]=br;
+    if(!cur || !cur.demoMode)return cur;
+    var step=Number(cur.demoStep||0);
+    if(step===0){cur.demoStep=1;nextTab='courts';return cur;}
+    if(step===1){cur.demoStep=2;nextTab='courts';return cur;}
+    if(step===2){cur.demoStep=3;return cur;}
+    if(step===3){
+      var courts=Object.assign({},cur.courts||{}), c=courts['1'];
+      if(c&&c.match){
+        var m=c.match, result={winner:'A',gameWinsA:2,gameWinsB:0,pointsA:42,pointsB:29,gameScores:[{a:21,b:14},{a:21,b:15}]};
+        cur.pendingResults=cur.pendingResults||{}; cur.pendingResults['demo_'+Date.now()]={courtNo:1,match:m,result:result,finishedAt:Date.now()};
+        courts['1']=Object.assign({},c,{status:'idle',match:null,live:null,lastResult:result,finishedAt:Date.now()});cur.courts=courts;
+      }
+      cur=applyPendingResults(cur);cur=resolveBracketsIntoQueue(cur);cur.demoStep=4;nextTab='courts';return cur;
     }
-    cur.completedMatches=cur.completedMatches||{};
-    cur.completedMatches[m.matchCode]={matchCode:m.matchCode,winner:'A',winnerTeam:m.teamA,teamA:m.teamA,teamB:m.teamB,gameWinsA:2,gameWinsB:0,pointsA:42,pointsB:29,gameScores:result.gameScores,finishedAt:Date.now()};
-    cur.queue=q.slice(1);
-    return resolveBracketsIntoQueue(cur);
+    if(step===4){cur.demoStep=5;nextTab='tournament';return cur;}
+    if(step===5){cur.demoStep=6;nextTab='withdrawal';return cur;}
+    if(step===6){cur.demoStep=7;nextTab='settings';return cur;}
+    if(step===7){
+      var guard=20;while(guard--){var before=toArray(cur.queue).length;cur=demoFinishOne(cur);if(toArray(cur.queue).length===before)break;}
+      cur.demoStep=8;nextTab='tournament';return cur;
+    }
+    if(step===8){cur.demoStep=9;nextTab='tournament';return cur;}
+    return cur;
+  },function(err,committed,snap){
+    if(err)return;
+    var d=snap&&snap.val?snap.val():null;
+    if(d && Number(d.demoStep)===2){
+      dispatchNextToCourt(eventId,1).then(function(){ activeTab='courts'; });
+    }
+    if(nextTab)activeTab=nextTab;
   });
 }
 function endDemo(eventId){
@@ -1181,14 +1220,25 @@ function endDemo(eventId){
   dbOff(); dbRef(eventId).remove(function(){try{sessionStorage.removeItem(DEMO_SESSION_KEY);}catch(e){} location.hash=''; mountSetup();});
 }
 function buildDemoGuide(eventId,data){
-  var box=el('div',{className:'demo-guide'});
-  box.appendChild(el('div',{className:'demo-guide-title'},'デモモード'));
+  var step=Number(data.demoStep||0), box=el('div',{className:'demo-guide'});
+  box.appendChild(el('div',{className:'demo-guide-title'},'デモ '+(Math.min(step+1,10))+' / 10'));
   box.appendChild(el('div',{className:'demo-guide-text'},demoProgressText(data)));
   var acts=el('div',{className:'demo-guide-actions'});
-  var next=el('button',{className:'btn btn-primary',type:'button'},'次のデモ結果'); next.onclick=function(){advanceDemo(eventId);};
-  var tour=el('button',{className:'btn',type:'button'},'リーグ・トーナメントを見る'); tour.onclick=function(){activeTab='tournament';mountProgress(eventId,data,'admin');};
-  var end=el('button',{className:'btn',type:'button'},'デモ終了'); end.onclick=function(){endDemo(eventId);};
-  acts.appendChild(next);acts.appendChild(tour);acts.appendChild(end);box.appendChild(acts);return box;
+  var label=step>=9?'もう一度見る':(step===2?'バドるを見る':'デモを進める');
+  var next=el('button',{className:'btn btn-primary',type:'button'},label);
+  next.onclick=function(){if(step>=9){dbRef(eventId).child('demoStep').set(0);activeTab='courts';}else advanceDemo(eventId);};
+  var end=el('button',{className:'btn',type:'button'},'デモ終了');end.onclick=function(){endDemo(eventId);};
+  acts.appendChild(next);acts.appendChild(end);box.appendChild(acts);return box;
+}
+function buildDemoBadoruStage(eventId,data){
+  if(!data.demoMode || Number(data.demoStep||0)!==3)return null;
+  var base=(data.badoruBaseUrl||DEFAULT_BADORU_URL).replace(/\/?$/,'/');
+  var url=base+'?taikaEvent='+encodeURIComponent(eventId)+'&court=1&fullscreen=1';
+  var stage=el('div',{className:'demo-badoru-stage'});
+  var head=el('div',{className:'demo-badoru-head'});
+  head.appendChild(el('div',{},[el('strong',{},'バドる連携デモ'),el('span',{style:{display:'block'}},'大会Nowから配信されたコート1の試合を表示しています')]));
+  var btn=el('button',{className:'demo-badoru-next',type:'button'},'採点完了 → 大会Nowへ');btn.onclick=function(){advanceDemo(eventId);};head.appendChild(btn);
+  stage.appendChild(head);stage.appendChild(el('iframe',{className:'demo-badoru-frame',src:url,allow:'fullscreen'}));return stage;
 }
 
 /* ══ 表示ヘルパー ══ */
@@ -3038,6 +3088,7 @@ function mountProgress(eventId,data,role){
   }
   root.appendChild(tabs);
   if(isAdmin && data.demoMode) root.appendChild(buildDemoGuide(eventId,data));
+  if(isAdmin && data.demoMode){ var demoStage=buildDemoBadoruStage(eventId,data); if(demoStage) root.appendChild(demoStage); }
 
   if(activeTab==='withdrawal' && isAdmin){
     var withdrawalWrap=el('div',{style:{paddingBottom:'24px'}});
