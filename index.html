@@ -1805,12 +1805,21 @@ function buildBracketCard(data, bracket){
         var sr=sourceEl.getBoundingClientRect(), dr=targetEl.getBoundingClientRect();
         var x1=sr.right-tr.left, y1=sr.top-tr.top+sr.height/2;
         var x2=dr.left-tr.left, y2=dr.top-tr.top+(pair[0]==='A'?dr.height*.25:dr.height*.75);
-        var xm=x1+(x2-x1)*.52;
+        // 直角配線で同じ縦線を共有すると、シードや変則ドローで複数の線が重なり
+        // どの試合へ接続しているか判別しにくくなる。各接続を独立した滑らかな曲線で描き、
+        // 始点から終点まで一本の線として追えるようにする。
+        var dx=Math.max(24,x2-x1);
+        var bend=Math.max(18,Math.min(72,dx*.48));
+        var c1=x1+bend, c2=x2-bend;
+        if(c2<c1){ var mid=(x1+x2)/2; c1=mid; c2=mid; }
         var path=document.createElementNS('http://www.w3.org/2000/svg','path');
-        path.setAttribute('d','M '+x1+' '+y1+' H '+xm+' V '+y2+' H '+x2);
+        path.setAttribute('d','M '+x1+' '+y1+' C '+c1+' '+y1+', '+c2+' '+y2+', '+x2+' '+y2);
         var progressed=!!sourceEl.classList.contains('progressed');
         path.setAttribute('fill','none'); path.setAttribute('stroke',progressed?'#e22':'#c9c9c5');
-        path.setAttribute('stroke-width',progressed?'3':'2'); path.setAttribute('vector-effect','non-scaling-stroke');
+        path.setAttribute('stroke-width',progressed?'3':'2');
+        path.setAttribute('stroke-linecap','round');
+        path.setAttribute('stroke-linejoin','round');
+        path.setAttribute('vector-effect','non-scaling-stroke');
         svg.appendChild(path);
       });
     });
