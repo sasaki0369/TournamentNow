@@ -2222,15 +2222,17 @@ function showHelpModal(){
       '<b>自分の試合を探す</b>：選手名の一部を入力すると、進行中／待ち順と予測時刻／結果、をまとめて確認できます。',
       '<b>キュー待ちの予測時刻</b>：正常終了の実績が19試合まではCSV記載の時間差を維持し、最新のassignedAt（大会Nowからコートへ配信した時刻）に合わせて全体を補正します。20試合そろった後は、直近20試合のassignedAtから終了までの平均所要時間を使い、コート別の空き時刻をシミュレーションして先の試合まで随時再予測します。'
     ]),
-    section('⑥「設定」タブ','',[
-      '<b>棄権（不戦敗）</b>：選手名を検索して登録すると、その選手（チーム）が絡む未実施の試合はすべて自動的に相手の不戦勝になります。バドるで試合途中に棄権した場合も自動的にここへ登録されます。',
+    section('⑥「棄権」タブ','',[
+      '<b>棄権（不戦敗）</b>：選手名を検索して登録すると、その選手（チーム）が絡む未実施の試合はすべて自動的に相手の不戦勝になります。バドるで試合途中に棄権した場合も自動的にここへ登録されます。登録済みの棄権者もこのタブで確認・取消できます。'
+    ]),
+    section('⑦「設定」タブ','',[
       '<b>試合ルール</b>：試合形式・得点・セッティング（デュース）を大会共通で設定。連携中のバドるに自動反映されます。',
-      '<b>共有</b>：参加者が進行状況を閲覧だけできるリンク（URL・QRコード）。',
+      '<b>共有</b>：参加者向けの閲覧専用リンクと、別端末で同じ大会を運営できる運営者向けリンク（URL・QRコード）。',
       '<b>バドる連携</b>：コートごとの連携リンク（URL・QRコード）。そのリンクをタブレットで一度開くだけで、大会ID・コート番号の入力なしに自動連携されます。連携中のバドるは選手名の左右入替・ファーストサーバー/レシーバー・試合開始しか操作できません。',
       '<b>進行状況</b>：現在の状態をCSVに書き出す「エクスポート」、そのCSVから復元する「インポート」、試合を追加で読み込む「追加で取り込む」、全部消してやり直す「上書きする」。',
       '<b>大会一覧に戻る</b>：試合を進めながらでも、ここからいつでも他の大会や新規作成画面に移動できます。'
     ]),
-    section('⑦ バドるとの連携でできること','',[
+    section('⑧ バドるとの連携でできること','',[
       '配信された試合の選手名・種目が自動反映されます。',
       '試合終了・棄権の結果が自動的に大会Nowへ送られ、リーグ・ブラケットに反映されます。開始取消では結果を送らず、配信済み・開始待ちへ戻ります。',
       '盤面・設定画面に、そのタブレットが担当しているコート番号が表示されます。',
@@ -2381,7 +2383,6 @@ function buildWithdrawalManager(eventId, data){
   navSection.appendChild(navList);
   wrap.appendChild(navSection);
 
-  wrap.appendChild(buildWithdrawalManager(eventId, data));
 
   // --- 不戦敗の順位計算方法 ---
   var woSection = el('div',{className:'settings-section'});
@@ -2477,6 +2478,17 @@ function buildWithdrawalManager(eventId, data){
   var shareQrBtn = el('button',{className:'pill-btn'},'QR');
   shareQrBtn.onclick=function(){ showQrModal('参加者向け共有リンク', shareUrl); };
   shareList.appendChild(settingsRow('参加者向け共有リンク','進行状況を閲覧のみできるリンクです', el('div',{style:{display:'flex',gap:'6px'}},[shareQrBtn, shareBtn])));
+
+  var adminShareUrl = getBase()+'#admin:'+eventId;
+  var adminShareBtn = el('button',{className:'pill-btn pill-dark'},'コピー');
+  adminShareBtn.onclick=function(){
+    try{navigator.clipboard.writeText(adminShareUrl);}catch(e){}
+    adminShareBtn.textContent='✓ コピー済み';
+    setTimeout(function(){adminShareBtn.textContent='コピー';},1600);
+  };
+  var adminShareQrBtn = el('button',{className:'pill-btn'},'QR');
+  adminShareQrBtn.onclick=function(){ showQrModal('運営者向け共有リンク', adminShareUrl); };
+  shareList.appendChild(settingsRow('運営者向け共有リンク','同じ大会の運営画面を別端末で開くリンクです。配信・設定変更などの運営操作ができます', el('div',{style:{display:'flex',gap:'6px'}},[adminShareQrBtn, adminShareBtn])));
   shareSection.appendChild(shareList);
   wrap.appendChild(shareSection);
 
@@ -2835,11 +2847,22 @@ function mountProgress(eventId,data,role){
   tabTournament.onclick=function(){ activeTab='tournament'; mountProgress(eventId,data,role); };
   tabs.appendChild(tabCourts); tabs.appendChild(tabTournament);
   if(isAdmin){
+    var tabWithdrawal = el('button',{className:'tab-btn'+(activeTab==='withdrawal'?' active':'')},'棄権');
+    tabWithdrawal.onclick=function(){ activeTab='withdrawal'; mountProgress(eventId,data,role); };
+    tabs.appendChild(tabWithdrawal);
     var tabSettings = el('button',{className:'tab-btn'+(activeTab==='settings'?' active':'')},'設定');
     tabSettings.onclick=function(){ activeTab='settings'; mountProgress(eventId,data,role); };
     tabs.appendChild(tabSettings);
   }
   root.appendChild(tabs);
+
+  if(activeTab==='withdrawal' && isAdmin){
+    var withdrawalWrap=el('div',{style:{paddingBottom:'24px'}});
+    withdrawalWrap.appendChild(buildWithdrawalManager(eventId, data));
+    root.appendChild(withdrawalWrap);
+    render(root);
+    return;
+  }
 
   if(activeTab==='settings' && isAdmin){
     root.appendChild(buildSettingsView(eventId, data));
