@@ -198,6 +198,30 @@ input:focus,textarea:focus{outline:none}
 
 /* ===== 紙芝居デモ ===== */
 .demo-kami{position:fixed;inset:0;z-index:3000;background:rgba(8,15,28,.96);display:flex;flex-direction:column;color:#fff}.demo-kami-head{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#0b4a8b}.demo-kami-head strong{font-size:18px}.demo-kami-count{margin-left:auto;font-weight:800}.demo-kami-close{border:1px solid #ffffff66;background:#ffffff18;color:#fff;border-radius:8px;padding:8px 12px;font-weight:800}.demo-kami-body{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:16px}.demo-kami-card{width:min(1180px,96vw);max-height:100%;display:flex;flex-direction:column;align-items:center}.demo-kami-shot{display:block;max-width:100%;max-height:calc(100vh - 230px);object-fit:contain;border-radius:10px;box-shadow:0 8px 30px #0008;background:#fff}.demo-kami-caption{width:100%;padding:12px 6px 4px}.demo-kami-caption h2{margin:0 0 4px;font-size:20px}.demo-kami-caption p{margin:0;color:#dbeafe;font-size:14px;line-height:1.5}.demo-kami-foot{display:flex;gap:10px;justify-content:center;padding:10px 16px 16px}.demo-kami-foot .btn{min-width:120px}.demo-kami-dots{display:flex;gap:6px;align-items:center;justify-content:center;padding:0 0 6px}.demo-kami-dot{width:8px;height:8px;border-radius:50%;background:#ffffff55}.demo-kami-dot.on{background:#fff}.demo-kami-foot .btn:disabled{opacity:.35}
+/* スマホではハードコピーを大きく見せ、横方向はスワイプして確認 */
+@media(max-width:600px){
+  .demo-kami-head{padding:8px 10px;gap:8px}
+  .demo-kami-head strong{font-size:14px}
+  .demo-kami-count{font-size:12px}
+  .demo-kami-close{padding:6px 9px;font-size:12px}
+  .demo-kami-body{display:block;padding:6px 0;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch}
+  .demo-kami-card{width:max-content;max-width:none;height:100%;align-items:flex-start}
+  .demo-kami-shot{width:auto;max-width:none;height:calc(100dvh - 205px);max-height:none;border-radius:0;box-shadow:none}
+  .demo-kami-caption{position:fixed;left:0;right:0;bottom:58px;z-index:2;box-sizing:border-box;padding:8px 12px;background:rgba(8,15,28,.92)}
+  .demo-kami-caption h2{font-size:15px;margin:0 0 2px}
+  .demo-kami-caption p{font-size:11px;line-height:1.35}
+  .demo-kami-dots{position:fixed;left:0;right:0;bottom:50px;z-index:3;padding:3px 0;background:rgba(8,15,28,.92)}
+  .demo-kami-foot{position:fixed;left:0;right:0;bottom:0;z-index:3;padding:6px 10px;background:#08101d}
+  .demo-kami-foot .btn{min-width:0;flex:1;padding:9px 8px}
+}
+@media(max-width:600px) and (orientation:landscape){
+  .demo-kami-shot{height:calc(100dvh - 150px)}
+  .demo-kami-caption{bottom:50px;padding:5px 10px}
+  .demo-kami-caption h2{font-size:13px}
+  .demo-kami-caption p{font-size:10px}
+  .demo-kami-dots{display:none}
+  .demo-kami-foot{padding:4px 10px}
+}
 </style>
 </head>
 <body>
