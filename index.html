@@ -222,6 +222,21 @@ input:focus,textarea:focus{outline:none}
   .demo-kami-dots{display:none}
   .demo-kami-foot{padding:4px 10px}
 }
+/* スマホ横画面: CSS幅ではなく画面の低い高さでも判定。画像を画面幅いっぱいに拡大し、上下左右をスクロールして確認できるようにする */
+@media (orientation:landscape) and (max-height:700px){
+  .demo-kami-head{padding:6px 10px;min-height:38px;box-sizing:border-box}
+  .demo-kami-head strong{font-size:15px}
+  .demo-kami-close{padding:5px 10px}
+  .demo-kami-body{display:block;padding:0;overflow:auto;-webkit-overflow-scrolling:touch}
+  .demo-kami-card{width:100vw;max-width:none;max-height:none;height:auto;display:block}
+  .demo-kami-shot{display:block;width:100vw;height:auto;max-width:none;max-height:none;object-fit:initial;border-radius:0;box-shadow:none}
+  .demo-kami-caption{position:fixed;left:0;right:0;bottom:46px;z-index:4;box-sizing:border-box;padding:5px 12px;background:rgba(8,15,28,.88);pointer-events:none}
+  .demo-kami-caption h2{font-size:14px;margin:0 0 1px}
+  .demo-kami-caption p{font-size:10px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .demo-kami-dots{display:none}
+  .demo-kami-foot{position:fixed;left:0;right:0;bottom:0;z-index:5;height:46px;box-sizing:border-box;padding:4px 10px;background:#08101d}
+  .demo-kami-foot .btn{padding:6px 8px}
+}
 </style>
 </head>
 <body>
