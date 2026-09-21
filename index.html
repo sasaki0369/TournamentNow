@@ -1420,7 +1420,15 @@ extraStyle.textContent = [
   '.tournament-team.winner{font-weight:800;background:#f7f7f3}',
   '.tournament-team.pending{color:var(--ink3);font-style:italic}',
   '.tournament-team-score{font-family:var(--mono);font-size:12px;font-weight:800;color:var(--ink2)}',
-  '.tournament-arrow{position:absolute;right:-27px;top:calc(50% - 9px);font-size:16px;color:#aaa;z-index:2}',
+  '.tournament-arrow{display:none}',
+  '.tournament-game{--path:#c9c9c5}',
+  '.tournament-game.progressed{--path:#e22}',
+  '.tournament-game:not(.last-round)::after{content:"";position:absolute;right:-35px;top:50%;width:35px;border-top:3px solid var(--path);z-index:1}',
+  '.tournament-pair{position:relative;display:flex;flex-direction:column;justify-content:space-around;gap:22px;flex:1}',
+  '.tournament-pair.has-next::after{content:"";position:absolute;right:-35px;top:25%;height:50%;border-right:3px solid #c9c9c5;z-index:0}',
+  '.tournament-pair.has-next.pair-complete::after{border-right-color:#e22}',
+  '.tournament-origin{display:block;margin-top:2px;font-size:9px;font-weight:600;color:var(--ink3);white-space:nowrap}',
+  '.tournament-team.winner .tournament-origin{color:inherit;opacity:.72}',
   '.score-detail-trigger{cursor:pointer;touch-action:manipulation}',
   '.score-detail-trigger:hover{filter:brightness(.97)}',
   '.standing td.score-detail-trigger,.standing td.mgp-trigger{text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}',
@@ -1456,7 +1464,7 @@ extraStyle.textContent = [
   '.award-player{overflow-wrap:anywhere}',
   '.tournament-team>span:first-child{min-width:0;overflow-wrap:anywhere}',
   '@media(max-width:520px){.detail-modal-bg{padding:10px}.detail-modal{width:100%;max-height:92dvh;padding:16px 14px}.detail-versus{grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr);gap:5px}.detail-player{font-size:13px}.detail-games th,.detail-games td{padding:7px 4px}.league-card{margin-left:10px;margin-right:10px;padding-left:10px;padding-right:10px}.appbar{padding-left:12px;padding-right:12px}.appbar-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.appbar-right{flex-shrink:0;margin-left:8px}}',
-  '@media(max-width:700px){.tournament-tree{gap:28px;padding-left:4px}.tournament-round-col,.tournament-game{min-width:205px;width:205px}.tournament-game:not(.last-round)::after{right:-29px;width:29px}}',
+  '@media(max-width:700px){.tournament-tree{gap:28px;padding-left:4px}.tournament-round-col,.tournament-game{min-width:205px;width:205px}.tournament-game:not(.last-round)::after{right:-29px;width:29px}.tournament-pair.has-next::after{right:-29px}}',
   '.create-form{background:#fcfcfa;border:1px solid var(--rule);border-radius:8px;margin:10px 18px;padding:12px 14px}',
   '.create-form .field-label{margin-top:8px}',
   '.match-row-editor{display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap}',
@@ -1631,38 +1639,54 @@ function buildBracketCard(data, bracket){
   var roundKeys=Object.keys(rounds).map(Number).sort(function(a,b){return a-b;});
   if(!roundKeys.length) return card;
 
+  function slotDisplay(ref, team){
+    if(team && team.length) return {name:teamLabel(team), origin:ref && ref.type==='leagueRank' ? bracketSlotLabel(data,ref) : ''};
+    var resolved=resolveSlotRef(data,ref);
+    if(resolved && resolved.length) return {name:teamLabel(resolved), origin:ref && ref.type==='leagueRank' ? bracketSlotLabel(data,ref) : ''};
+    return {name:bracketSlotLabel(data,ref), origin:''};
+  }
+
   var scroll=el('div',{className:'tournament-scroll'});
   var tree=el('div',{className:'tournament-tree'});
   var maxGames=Math.max.apply(null,roundKeys.map(function(r){return rounds[r].length;}));
-  var minH=Math.max(150,maxGames*92);
+  var minH=Math.max(180,maxGames*104);
 
   roundKeys.forEach(function(r,ri){
     var col=el('div',{className:'tournament-round-col'});
     var roundName=(ri===roundKeys.length-1 && roundKeys.length>1)?'決勝':(roundKeys.length>2 && ri===roundKeys.length-2?'準決勝':'ROUND '+r);
     col.appendChild(el('div',{className:'tournament-round-title'},roundName));
     var holder=el('div',{className:'tournament-round-matches',style:{minHeight:minH+'px'}});
-    rounds[r].sort(function(a,b){return Number(a.id||0)-Number(b.id||0);}).forEach(function(m){
-      var aLabel=m.teamA?teamLabel(m.teamA):bracketSlotLabel(data,m.slotA);
-      var bLabel=m.teamB?teamLabel(m.teamB):bracketSlotLabel(data,m.slotB);
-      if(m.result&&m.result.retired){ if(m.result.retiredSide==='A')aLabel+='（キ）'; if(m.result.retiredSide==='B')bLabel+='（キ）'; }
-      var game=el('div',{className:'tournament-game'+(ri===roundKeys.length-1?' last-round':'')+(m.result?' score-detail-trigger':''),title:m.result?'タップして試合詳細を表示':''});
-      if(m.result){ (function(mm,aa,bb){ game.onclick=function(){showMatchDetail(bracket.name+' 試合詳細',mm.teamA||[],mm.teamB||[],mm.result);}; })(m,aLabel,bLabel); }
-      function teamRow(side,label,hasTeam){
-        var won=m.result&&m.result.winner===side;
-        var cls='tournament-team'+(won?' winner':'')+(!hasTeam?' pending':'');
-        var score='';
-        if(m.result){
-          if(m.result.voided) score='除';
-          else if(m.result.retired && m.result.retiredSide===side) score='キ';
-          else score=side==='A'?String(m.result.gameWinsA):String(m.result.gameWinsB);
+    var rms=rounds[r].slice().sort(function(a,b){return Number(a.id||0)-Number(b.id||0);});
+
+    // 2試合ずつを一つの枝としてまとめる。縦線＋横線で次ラウンドへの勝ち上がりを可視化する。
+    for(var pi=0; pi<rms.length; pi+=2){
+      var pairMatches=rms.slice(pi,pi+2);
+      var pair=el('div',{className:'tournament-pair'+(ri<roundKeys.length-1?' has-next':'')+(pairMatches.length===2 && pairMatches.every(function(x){return !!x.result;})?' pair-complete':'')});
+      pairMatches.forEach(function(m){
+        var ad=slotDisplay(m.slotA,m.teamA), bd=slotDisplay(m.slotB,m.teamB);
+        var aLabel=ad.name, bLabel=bd.name;
+        if(m.result&&m.result.retired){ if(m.result.retiredSide==='A')aLabel+='（キ）'; if(m.result.retiredSide==='B')bLabel+='（キ）'; }
+        var game=el('div',{className:'tournament-game'+(ri===roundKeys.length-1?' last-round':'')+(m.result?' progressed score-detail-trigger':''),title:m.result?'タップして試合詳細を表示':''});
+        if(m.result){ (function(mm){ game.onclick=function(){showMatchDetail(bracket.name+' 試合詳細',mm.teamA||resolveSlotRef(data,mm.slotA)||[],mm.teamB||resolveSlotRef(data,mm.slotB)||[],mm.result);}; })(m); }
+        function teamRow(side,label,disp,hasTeam){
+          var won=m.result&&m.result.winner===side;
+          var cls='tournament-team'+(won?' winner':'')+(!hasTeam?' pending':'');
+          var score='';
+          if(m.result){
+            if(m.result.voided) score='除';
+            else if(m.result.retired && m.result.retiredSide===side) score='キ';
+            else score=side==='A'?String(m.result.gameWinsA):String(m.result.gameWinsB);
+          }
+          var nameBox=el('span',{},label);
+          if(disp.origin) nameBox.appendChild(el('small',{className:'tournament-origin'},disp.origin));
+          return el('div',{className:cls},[nameBox,el('span',{className:'tournament-team-score'},score)]);
         }
-        return el('div',{className:cls},[el('span',{},label),el('span',{className:'tournament-team-score'},score)]);
-      }
-      game.appendChild(teamRow('A',aLabel,!!m.teamA));
-      game.appendChild(teamRow('B',bLabel,!!m.teamB));
-      if(ri<roundKeys.length-1) game.appendChild(el('span',{className:'tournament-arrow'},'›'));
-      holder.appendChild(game);
-    });
+        game.appendChild(teamRow('A',aLabel,ad,!!(m.teamA||resolveSlotRef(data,m.slotA))));
+        game.appendChild(teamRow('B',bLabel,bd,!!(m.teamB||resolveSlotRef(data,m.slotB))));
+        pair.appendChild(game);
+      });
+      holder.appendChild(pair);
+    }
     col.appendChild(holder); tree.appendChild(col);
   });
   scroll.appendChild(tree); card.appendChild(scroll);
