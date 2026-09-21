@@ -1455,12 +1455,14 @@ extraStyle.textContent = [
   '.bracket-match .winner{font-weight:700}',
   '.bracket-match .score{font-family:var(--mono);font-size:12px;color:var(--ink3);margin-left:auto}',
   '.tournament-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding:4px 2px 10px}',
-  '.tournament-tree{display:flex;align-items:stretch;gap:34px;min-width:max-content;padding:8px 12px 14px}',
+  '.tournament-tree{display:flex;align-items:stretch;gap:34px;min-width:max-content;padding:8px 12px 14px;position:relative}',
+  '.tournament-connectors{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:0}',
+  '.tournament-round-col,.tournament-game{z-index:1}',
   '.tournament-round-col{display:flex;flex-direction:column;min-width:230px;position:relative}',
   '.tournament-round-title{text-align:center;font-size:11px;font-weight:800;color:var(--ink3);letter-spacing:.08em;margin:0 0 10px}',
   '.tournament-round-matches{display:flex;flex-direction:column;justify-content:space-around;gap:22px;flex:1;min-height:150px}',
   '.tournament-game{position:relative;width:230px;border:1px solid var(--rule);border-radius:8px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow:visible}',
-  '.tournament-game:not(.last-round)::after{content:"";position:absolute;right:-35px;top:50%;width:35px;border-top:2px solid #c9c9c5}',
+  '.tournament-game:not(.last-round)::after{display:none}',
   '.tournament-team{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 10px;font-size:12px;line-height:1.35;min-height:36px}',
   '.tournament-team+.tournament-team{border-top:1px solid var(--rule)}',
   '.tournament-team.winner{font-weight:800;background:#f7f7f3}',
@@ -1469,10 +1471,10 @@ extraStyle.textContent = [
   '.tournament-arrow{display:none}',
   '.tournament-game{--path:#c9c9c5}',
   '.tournament-game.progressed{--path:#e22}',
-  '.tournament-game:not(.last-round)::after{content:"";position:absolute;right:-35px;top:50%;width:35px;border-top:3px solid var(--path);z-index:1}',
+  '.tournament-game:not(.last-round)::after{display:none}',
   '.tournament-pair{position:relative;display:flex;flex-direction:column;justify-content:space-around;gap:22px;flex:1}',
-  '.tournament-pair.has-next::after{content:"";position:absolute;right:-35px;top:25%;height:50%;border-right:3px solid #c9c9c5;z-index:0}',
-  '.tournament-pair.has-next.pair-complete::after{border-right-color:#e22}',
+  '.tournament-pair.has-next::after{display:none}',
+  '.tournament-pair.has-next.pair-complete::after{display:none}',
   '.tournament-origin{display:block;margin-top:2px;font-size:9px;font-weight:600;color:var(--ink3);white-space:nowrap}',
   '.tournament-team.winner .tournament-origin{color:inherit;opacity:.72}',
   '.score-detail-trigger{cursor:pointer;touch-action:manipulation}',
@@ -1750,7 +1752,7 @@ function buildBracketCard(data, bracket){
         var ad=slotDisplay(m.slotA,m.teamA), bd=slotDisplay(m.slotB,m.teamB);
         var aLabel=ad.name, bLabel=bd.name;
         if(m.result&&m.result.retired){ if(m.result.retiredSide==='A')aLabel+='（キ）'; if(m.result.retiredSide==='B')bLabel+='（キ）'; }
-        var game=el('div',{className:'tournament-game'+(ri===roundKeys.length-1?' last-round':'')+(m.result?' progressed score-detail-trigger':''),title:m.result?'タップして試合詳細を表示':''});
+        var game=el('div',{className:'tournament-game'+(ri===roundKeys.length-1?' last-round':'')+(m.result?' progressed score-detail-trigger':''),title:m.result?'タップして試合詳細を表示':'','data-match-code':String(m.matchCode||''),'data-round':String(r)});
         if(m.result){ (function(mm){ game.onclick=function(){showMatchDetail(bracket.name+' 試合詳細',mm.teamA||resolveSlotRef(data,mm.slotA)||[],mm.teamB||resolveSlotRef(data,mm.slotB)||[],mm.result);}; })(m); }
         function teamRow(side,label,disp,hasTeam){
           var won=m.result&&m.result.winner===side;
@@ -1773,6 +1775,48 @@ function buildBracketCard(data, bracket){
     }
     col.appendChild(holder); tree.appendChild(col);
   });
+  // 実際の #winner:試合コード 参照だけを使って線を描く。
+  // これによりシードが途中ラウンドから入っても、無関係な1回戦同士を結ばない。
+  var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('class','tournament-connectors');
+  svg.setAttribute('aria-hidden','true');
+  tree.insertBefore(svg,tree.firstChild);
+  function sourceCode(ref){
+    if(!ref) return '';
+    if(ref.type==='matchWinnerCode') return String(ref.matchCode||'');
+    if(ref.type==='matchWinner'){
+      var src=matches.find(function(x){return Number(x.id)===Number(ref.matchId);});
+      return src?String(src.matchCode||''):'';
+    }
+    return '';
+  }
+  function drawTournamentConnectors(){
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+    var tr=tree.getBoundingClientRect();
+    if(!tr.width||!tr.height) return;
+    svg.setAttribute('viewBox','0 0 '+tr.width+' '+tr.height);
+    svg.setAttribute('width',tr.width); svg.setAttribute('height',tr.height);
+    matches.forEach(function(target){
+      var targetEl=tree.querySelector('[data-match-code="'+CSS.escape(String(target.matchCode||''))+'"]');
+      if(!targetEl) return;
+      [['A',target.slotA],['B',target.slotB]].forEach(function(pair){
+        var code=sourceCode(pair[1]); if(!code) return;
+        var sourceEl=tree.querySelector('[data-match-code="'+CSS.escape(code)+'"]'); if(!sourceEl) return;
+        var sr=sourceEl.getBoundingClientRect(), dr=targetEl.getBoundingClientRect();
+        var x1=sr.right-tr.left, y1=sr.top-tr.top+sr.height/2;
+        var x2=dr.left-tr.left, y2=dr.top-tr.top+(pair[0]==='A'?dr.height*.25:dr.height*.75);
+        var xm=x1+(x2-x1)*.52;
+        var path=document.createElementNS('http://www.w3.org/2000/svg','path');
+        path.setAttribute('d','M '+x1+' '+y1+' H '+xm+' V '+y2+' H '+x2);
+        var progressed=!!sourceEl.classList.contains('progressed');
+        path.setAttribute('fill','none'); path.setAttribute('stroke',progressed?'#e22':'#c9c9c5');
+        path.setAttribute('stroke-width',progressed?'3':'2'); path.setAttribute('vector-effect','non-scaling-stroke');
+        svg.appendChild(path);
+      });
+    });
+  }
+  requestAnimationFrame(function(){requestAnimationFrame(drawTournamentConnectors);});
+  if(typeof ResizeObserver!=='undefined'){ var ro=new ResizeObserver(drawTournamentConnectors); ro.observe(tree); }
   scroll.appendChild(tree); card.appendChild(scroll);
   return card;
 }
