@@ -286,17 +286,63 @@ function parseRefOrNames(v1, v2){
 /* CSV全体を「通常のキュー登録行」と「参照記法を含むブラケット」に振り分ける */
 function csvParseMatchesAndBrackets(text){
   var rows = csvParseRows(text);
+  var queue = [];
+  var brackets = {};
+  var consumed = {};
+
+  /* MS1 / MS2 / ... のように「種目コード+通番」で構成される大会トーナメントは、
+     ROUND 1 に #winner 参照が無くても、同一種目の後続ラウンドに勝者参照があれば
+     ROUND 1 から決勝までを1つのbracketとして保持する。
+     これにより表示だけでなく、ROUND 1終了→ROUND 2への自動勝ち上がりも同じ構造になる。 */
+  var codeGroups = {}, codeOrder=[];
+  rows.forEach(function(r,i){
+    var cm=/^([A-Za-z]+)(\d+)$/.exec(String(r.code||'').trim());
+    if(!cm) return;
+    var prefix=cm[1].toUpperCase();
+    if(!codeGroups[prefix]){ codeGroups[prefix]=[]; codeOrder.push(prefix); }
+    codeGroups[prefix].push({row:r,rowIndex:i,codeNum:parseInt(cm[2],10)||0});
+  });
+  var eventNames={MS:'男子シングルス',WS:'女子シングルス',MD:'男子ダブルス',WD:'女子ダブルス',XD:'混合ダブルス'};
+  codeOrder.forEach(function(prefix){
+    var entries=codeGroups[prefix];
+    var hasLaterRound=entries.some(function(e){return Number(e.row.round||1)>1;});
+    var hasWinnerRef=entries.some(function(e){
+      var ai=parseRefOrNames(e.row.a1,e.row.a2), bi=parseRefOrNames(e.row.b1,e.row.b2);
+      return !!(ai.ref && (ai.ref.type==='matchWinner'||ai.ref.type==='matchWinnerCode')) ||
+             !!(bi.ref && (bi.ref.type==='matchWinner'||bi.ref.type==='matchWinnerCode'));
+    });
+    // 1ラウンドだけの通常キューを誤ってトーナメント化しない。
+    if(!hasLaterRound && !hasWinnerRef) return;
+    var bracketId=uid();
+    entries.sort(function(a,b){
+      var rd=Number(a.row.round||1)-Number(b.row.round||1);
+      return rd || a.codeNum-b.codeNum;
+    });
+    var matches=entries.map(function(e,idx){
+      consumed[e.rowIndex]=true;
+      var ai=parseRefOrNames(e.row.a1,e.row.a2), bi=parseRefOrNames(e.row.b1,e.row.b2);
+      function toSlot(info){
+        if(!info.ref) return {type:'fixed',names:info.names};
+        if(info.ref.type==='matchWinner') return {type:'matchWinner',bracketId:bracketId,matchId:info.ref.localNum-1};
+        if(info.ref.type==='matchWinnerCode') return {type:'matchWinnerCode',matchCode:info.ref.matchCode};
+        return info.ref;
+      }
+      return {id:idx,matchCode:e.row.code,time:e.row.time||'',round:e.row.round||1,
+        slotA:toSlot(ai),slotB:toSlot(bi),teamA:null,teamB:null,queued:false,result:null};
+    });
+    brackets[bracketId]={id:bracketId,name:(eventNames[prefix]||prefix)+' トーナメント',matches:matches};
+  });
+
+  // 上記で大会トーナメントとして取り込まれなかった行は、従来形式で処理する。
   var groups = {}; var order = [];
   rows.forEach(function(r, i){
+    if(consumed[i]) return;
     var m = /^(.*)-(\d+)$/.exec(r.code);
     var groupName = m ? m[1] : ('__単独__'+i);
     var num = m ? parseInt(m[2],10) : 1;
     if(!groups[groupName]){ groups[groupName]=[]; order.push(groupName); }
     groups[groupName].push({num:num, row:r});
   });
-
-  var queue = [];
-  var brackets = {};
 
   order.forEach(function(groupName){
     var entries = groups[groupName].slice().sort(function(a,b){return a.num-b.num;});
@@ -316,7 +362,7 @@ function csvParseMatchesAndBrackets(text){
           if(!info.ref) return { type:'fixed', names: info.names };
           if(info.ref.type==='matchWinner') return { type:'matchWinner', bracketId:bracketId, matchId: info.ref.localNum-1 };
           if(info.ref.type==='matchWinnerCode') return { type:'matchWinnerCode', matchCode:info.ref.matchCode };
-          return info.ref; // leagueRank
+          return info.ref;
         }
         return { id: idx, matchCode:e.row.code, time:e.row.time||'', round: e.row.round||1, slotA: toSlot(aInfo[idx]), slotB: toSlot(bInfo[idx]),
           teamA:null, teamB:null, queued:false, result:null };
