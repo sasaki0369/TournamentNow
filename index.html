@@ -2386,6 +2386,89 @@ function settingsRow(label, sub, actionEl){
   return el('div',{className:'settings-row'},[left, el('div',{className:'settings-row-action'},actionEl)]);
 }
 
+/* 棄権タブからも利用するためトップレベルに定義 */
+/* ══ 大会に登場する全選手名を収集する（棄権登録の候補表示に使う） ══ */
+function collectAllPlayerNames(data){
+  var names = {};
+  Object.keys(data.leagues||{}).forEach(function(lid){
+    toArray(data.leagues[lid].participants).forEach(function(team){
+      toArray(team).forEach(function(n){ if(n) names[n]=true; });
+    });
+  });
+  toArray(data.queue).forEach(function(item){
+    toArray(item.teamA).concat(toArray(item.teamB)).forEach(function(n){ if(n) names[n]=true; });
+  });
+  Object.keys(data.brackets||{}).forEach(function(bid){
+    toArray(data.brackets[bid].matches).forEach(function(m){
+      toArray(m.teamA).concat(toArray(m.teamB)).forEach(function(n){ if(n) names[n]=true; });
+    });
+  });
+  Object.keys(data.courts||{}).forEach(function(cno){
+    var c = data.courts[cno];
+    if(c && c.match){ toArray(c.match.teamA).concat(toArray(c.match.teamB)).forEach(function(n){ if(n) names[n]=true; }); }
+  });
+  return Object.keys(names).sort(function(a,b){ return a.localeCompare(b,'ja'); });
+}
+
+function buildWithdrawalManager(eventId, data){
+  var section = el('div',{className:'settings-section'});
+  section.appendChild(el('div',{className:'settings-section-title'},'棄権（不戦敗）'));
+  var list = el('div',{className:'settings-list',style:{padding:'12px 16px'}});
+
+  var withdrawn = data.withdrawnPlayers || {};
+  var withdrawnNames = Object.keys(withdrawn);
+
+  if(withdrawnNames.length > 0){
+    list.appendChild(el('div',{className:'settings-row-sub',style:{marginBottom:'8px'}},'棄権登録中の選手（以後の未実施の試合はすべて相手の不戦勝になります）：'));
+    withdrawnNames.forEach(function(name){
+      var undoBtn = el('button',{className:'pill-btn'},'取り消す');
+      undoBtn.onclick=function(){
+        var next = Object.assign({}, withdrawn);
+        delete next[name];
+        dbRef(eventId).child('withdrawnPlayers').set(next);
+      };
+      list.appendChild(el('div',{className:'search-hit'},[
+        el('span',{className:'search-badge done'},'棄権'),
+        el('span',{style:{flex:1}}, name),
+        undoBtn
+      ]));
+    });
+  }else{
+    list.appendChild(el('div',{style:{fontSize:12.5,color:'var(--ink3)',marginBottom:'8px'}},'現在、棄権登録されている選手はいません。'));
+  }
+
+  var inp = el('input',{className:'settings-inp',placeholder:'棄権する選手名を入力',style:{marginTop:'6px'}});
+  var suggestWrap = el('div',{style:{display:'flex',flexWrap:'wrap',gap:'6px',marginTop:'8px'}});
+  var allNames = collectAllPlayerNames(data);
+  inp.oninput=function(){
+    var q = inp.value.trim();
+    suggestWrap.innerHTML = '';
+    if(!q) return;
+    allNames.filter(function(n){ return n.indexOf(q)>=0 && !withdrawn[n]; }).slice(0,8).forEach(function(n){
+      var btn = el('button',{className:'pill-btn'},n);
+      btn.onclick=function(){ registerWithdrawal(n); };
+      suggestWrap.appendChild(btn);
+    });
+  };
+  function registerWithdrawal(name){
+    if(!name) return;
+    var next = Object.assign({}, withdrawn);
+    next[name] = true;
+    dbRef(eventId).child('withdrawnPlayers').set(next).then(function(){ inp.value=''; suggestWrap.innerHTML=''; });
+  }
+  var addBtn = el('button',{className:'pill-btn pill-danger',style:{marginTop:'8px'}},'この名前で棄権登録');
+  addBtn.onclick=function(){ registerWithdrawal(inp.value.trim()); };
+
+  list.appendChild(inp);
+  list.appendChild(suggestWrap);
+  list.appendChild(addBtn);
+  section.appendChild(list);
+  section.appendChild(el('div',{className:'settings-row-sub',style:{margin:'8px 4px 0'}},
+    'ダブルスの場合は、ペアの片方の名前だけで登録すればチーム全体が対象になります。不戦敗の順位計算方法は下のA～Cから大会ごとに選択できます（初期値A）。Aは補完スコア、Bは勝敗のみ、Cは大会離脱者のリーグ戦を順位計算から除外します。'));
+  return section;
+}
+
+
 function buildSettingsView(eventId, data){
   var wrap = el('div',{style:{paddingBottom:'24px'}});
 
