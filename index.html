@@ -1743,6 +1743,7 @@ extraStyle.textContent = [
 document.head.appendChild(extraStyle);
 
 var activeTab = 'courts'; // 'courts' | 'tournament'
+var leagueSearchText = ''; // リーグ・トーナメントタブのリーグ絞り込み（端末内の表示状態）
 
 function closeDetailModal(bg){ if(bg && bg.parentNode) bg.parentNode.removeChild(bg); }
 function detailTeam(team){
@@ -2131,38 +2132,45 @@ function orderedLeagueIds(data){
   return ids.sort(alpha);
 }
 
-/* ドラッグでの並べ替え（Pointer Eventsでマウス/タッチ両対応） */
+/* ドラッグでの並べ替え（Pointer Eventsでマウス/タッチ両対応）。
+   move/up は document で受け、カードをDOM移動してもドラッグが途切れないようにする。 */
 function makeReorderable(container, itemSelector, getId, onDone){
   container.querySelectorAll('.drag-handle').forEach(function(handle){
     handle.addEventListener('pointerdown', function(e){
-      e.preventDefault();
-      var item = handle.closest(itemSelector);
-      if(!item) return;
-      var dragging = item;
+      if(e.button!=null && e.button!==0) return;
+      e.preventDefault(); e.stopPropagation();
+      var dragging = handle.closest(itemSelector);
+      if(!dragging) return;
+      var pointerId=e.pointerId;
       dragging.classList.add('dragging');
-      try{ handle.setPointerCapture(e.pointerId); }catch(err){}
+      document.body.style.userSelect='none';
 
       function onMove(ev){
-        var items = Array.prototype.slice.call(container.querySelectorAll(itemSelector));
-        var y = ev.clientY;
+        if(ev.pointerId!==pointerId) return;
+        ev.preventDefault();
+        var items = Array.prototype.slice.call(container.querySelectorAll(itemSelector)).filter(function(x){return x!==dragging;});
+        var y = ev.clientY, placed=false;
         for(var i=0;i<items.length;i++){
-          if(items[i]===dragging) continue;
-          var rect = items[i].getBoundingClientRect();
-          var mid = rect.top + rect.height/2;
-          if(y < mid){ container.insertBefore(dragging, items[i]); return; }
+          var rect=items[i].getBoundingClientRect();
+          if(y < rect.top + rect.height/2){ container.insertBefore(dragging,items[i]); placed=true; break; }
         }
-        container.appendChild(dragging);
+        if(!placed) container.appendChild(dragging);
+        // 画面端では自動スクロール
+        if(y<70) window.scrollBy(0,-12); else if(y>window.innerHeight-70) window.scrollBy(0,12);
       }
-      function onUp(ev){
-        try{ handle.releasePointerCapture(e.pointerId); }catch(err){}
+      function finish(ev){
+        if(ev && ev.pointerId!==pointerId) return;
         dragging.classList.remove('dragging');
-        handle.removeEventListener('pointermove', onMove);
-        handle.removeEventListener('pointerup', onUp);
-        var order = Array.prototype.slice.call(container.querySelectorAll(itemSelector)).map(getId);
+        document.body.style.userSelect='';
+        document.removeEventListener('pointermove',onMove);
+        document.removeEventListener('pointerup',finish);
+        document.removeEventListener('pointercancel',finish);
+        var order=Array.prototype.slice.call(container.querySelectorAll(itemSelector)).map(getId);
         onDone(order);
       }
-      handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', onUp);
+      document.addEventListener('pointermove',onMove,{passive:false});
+      document.addEventListener('pointerup',finish);
+      document.addEventListener('pointercancel',finish);
     });
   });
 }
@@ -2339,6 +2347,28 @@ function buildTournamentView(eventId, data, isAdmin){
   }
 
   wrap.appendChild(el('div',{className:'section-label'},'リーグ結果'));
+
+  // リーグ名・選手名でリーグカードを絞り込み
+  var leagueSearchWrap=el('div',{style:{padding:'8px 18px 6px'}});
+  var leagueSearch=el('input',{className:'field-inp',type:'search',placeholder:'リーグ名または選手名を入力',value:leagueSearchText,style:{width:'100%'}});
+  var composing=false;
+  leagueSearch.addEventListener('compositionstart',function(){composing=true;});
+  leagueSearch.addEventListener('compositionend',function(){composing=false; leagueSearchText=leagueSearch.value; applyLeagueFilter();});
+  leagueSearch.addEventListener('input',function(){ if(!composing){ leagueSearchText=leagueSearch.value; applyLeagueFilter(); } });
+  function leagueMatchesSearch(lg){
+    var q=(leagueSearchText||'').trim().toLowerCase();
+    if(!q) return true;
+    var hay=[lg.name||''].concat((lg.participants||[]).map(function(team){return teamLabel(team);})).join(' ').toLowerCase();
+    return hay.indexOf(q)>=0;
+  }
+  function applyLeagueFilter(){
+    if(!leagueList) return;
+    Array.prototype.forEach.call(leagueList.querySelectorAll('.league-card'),function(card){
+      var lid=card.getAttribute('data-league-id'), lg=leagues[lid];
+      card.style.display=(lg && leagueMatchesSearch(lg))?'':'none';
+    });
+  }
+  leagueSearchWrap.appendChild(leagueSearch); wrap.appendChild(leagueSearchWrap);
   if(isAdmin){
     var detection = autoDetectLeaguesFromQueue(data);
     if(detection.candidateGroups.length > 0){
@@ -2390,9 +2420,11 @@ function buildTournamentView(eventId, data, isAdmin){
     leagueList.appendChild(card);
   });
   wrap.appendChild(leagueList);
+  applyLeagueFilter();
   if(isAdmin && leagueIds.length>1){
     makeReorderable(leagueList, '.league-card', function(cardEl){ return cardEl.getAttribute('data-league-id'); }, function(order){
-      dbRef(eventId).child('leagueOrder').set(order);
+      // 表示順は大会データとしてFirebaseへ保存し、全管理・閲覧端末へ即時反映する。
+      dbRef(eventId).child('leagueOrder').set(order).catch(function(e){alert('表示順の保存に失敗しました: '+e.message);});
     });
   }
 
