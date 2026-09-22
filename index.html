@@ -1553,10 +1553,10 @@ function mountSetup(){
     dbRef(eventId).set(initial,function(err){
       if(err){errEl.textContent='作成に失敗しました: '+err.message;return;}
       saveEventToList({eventId:eventId,eventName:eventName,createdAt:Date.now()});
-      /* CSV内にリーグ候補がある場合は、通常画面より先にリーグ作成画面を開く。
-         リーグ候補がある場合は登録画面を先に確認し、登録後はコート状況へ進む。 */
+      /* CSV内にリーグ候補がある場合はリーグ登録画面を先に開く。
+         候補がない場合は、そのまま大会ルール等を確認できる設定画面へ進む。 */
       var leagueDetection = autoDetectLeaguesFromQueue(initial);
-      activeTab = leagueDetection.candidateGroups.length > 0 ? 'tournament' : 'courts';
+      activeTab = leagueDetection.candidateGroups.length > 0 ? 'tournament' : 'settings';
       scrollTournamentTopOnce = activeTab === 'tournament';
       location.hash='admin:'+eventId;
       startAdmin(eventId);
@@ -2781,8 +2781,8 @@ function buildTournamentView(eventId, data, isAdmin){
         var result = buildLeaguesFromGroups(data, selected);
         dbRef(eventId).update({ leagues: result.leagues, queue: result.queue, courts: result.courts })
           .then(function(){
-            detectMsg.textContent = selected.length+'件のリーグを登録しました。コート状況へ移動します。';
-            activeTab = 'courts';
+            detectMsg.textContent = selected.length+'件のリーグを登録しました。設定へ移動します。';
+            activeTab = 'settings';
             window.scrollTo(0,0);
             return dbRef(eventId).once('value');
           })
