@@ -1554,7 +1554,7 @@ function mountSetup(){
       if(err){errEl.textContent='作成に失敗しました: '+err.message;return;}
       saveEventToList({eventId:eventId,eventName:eventName,createdAt:Date.now()});
       /* CSV内にリーグ候補がある場合は、通常画面より先にリーグ作成画面を開く。
-         リーグ登録後に設定タブへ進めるため、CSV読み込み直後の作業順が明確になる。 */
+         リーグ候補がある場合は登録画面を先に確認し、登録後はコート状況へ進む。 */
       var leagueDetection = autoDetectLeaguesFromQueue(initial);
       activeTab = leagueDetection.candidateGroups.length > 0 ? 'tournament' : 'courts';
       scrollTournamentTopOnce = activeTab === 'tournament';
@@ -2781,8 +2781,13 @@ function buildTournamentView(eventId, data, isAdmin){
         var result = buildLeaguesFromGroups(data, selected);
         dbRef(eventId).update({ leagues: result.leagues, queue: result.queue, courts: result.courts })
           .then(function(){
-            detectMsg.textContent = selected.length+'件のリーグを登録しました。設定画面へ移動します。';
-            activeTab = 'settings';
+            detectMsg.textContent = selected.length+'件のリーグを登録しました。コート状況へ移動します。';
+            activeTab = 'courts';
+            window.scrollTo(0,0);
+            return dbRef(eventId).once('value');
+          })
+          .then(function(snap){
+            if(snap && snap.exists()) mountProgress(eventId,snap.val(),'admin');
           })
           .catch(function(e){ detectMsg.className='err'; detectMsg.textContent='失敗: '+e.message; });
       };
