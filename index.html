@@ -1468,7 +1468,7 @@ function mountSetup(){
 }
 
 /* ══ 手動配信：運営者がコールするタイミングで空きコートへ次試合を送る ══ */
-function dispatchNextToCourt(eventId,courtNo){
+function dispatchNextToCourt(eventId,courtNo,forceOverwrite){
   var ref=dbRef(eventId);
   return ref.transaction(function(cur){
     if(!cur)return cur;
@@ -1477,14 +1477,25 @@ function dispatchNextToCourt(eventId,courtNo){
     var courts=Object.assign({},data.courts||{});
     var key=String(courtNo);
     var court=courts[key]||{status:'idle',match:null,live:null,lastResult:null};
-    // idle に戻ったコートに古い match/live が残っていても配信を止めない。
-    // 表示上は「空き」なのに transaction だけが stale match を見て拒否するケースを防ぐ。
-    if(court.status!=='idle')return data;
-    if(court.match || court.live){
-      court=Object.assign({},court,{match:null,live:null,startedAt:null});
-      courts[key]=court;
-    }
+    // 表示とDBの状態が食い違っていても、既存試合を勝手に消さない。
+    // forceOverwrite のときだけ既存試合を待機列へ退避して、新しい試合を配信する。
+    var existingMatch=court.match||null;
+    var existingLive=court.live||null;
+    if((court.status!=='idle' || existingMatch || existingLive) && !forceOverwrite)return data;
     var queue=toArray(data.queue).slice();
+    if(forceOverwrite && existingMatch){
+      var same=function(q,m){
+        if(!q||!m)return false;
+        if(q.id && m.id)return q.id===m.id;
+        if(q.matchCode && m.matchCode)return q.matchCode===m.matchCode && q.refType===m.refType && q.refId===m.refId && q.refMatchIndex===m.refMatchIndex;
+        return false;
+      };
+      if(!queue.some(function(q){return same(q,existingMatch);})) queue.push(existingMatch);
+      // 上書き時は退避した既存試合を直ちに同じコートへ再配信しない。
+      queue=queue.filter(function(q){return !same(q,existingMatch);}).concat([existingMatch]);
+    }
+    court=Object.assign({},court,{status:'idle',match:null,live:null,startedAt:null});
+    courts[key]=court;
     if(!queue.length)return data;
     var playing=playingTeamNames(courts);
     // CSV予定時刻の早い試合から、他コートと選手が重複しない試合を選ぶ
@@ -1525,6 +1536,9 @@ function dispatchNextToCourt(eventId,courtNo){
     if(court && court.status==='assigned' && court.match){
       return {ok:true,match:court.match};
     }
+    if(!forceOverwrite && court && (court.match || court.live || (court.status && court.status!=='idle'))){
+      return {ok:false,conflict:true,court:court,reason:'このコートにはすでに試合情報があります'};
+    }
     var queue=toArray(data&&data.queue);
     if(!queue.length) return {ok:false,reason:'待機中の試合がありません'};
     var playing=playingTeamNames((data&&data.courts)||{});
@@ -1535,6 +1549,42 @@ function dispatchNextToCourt(eventId,courtNo){
     if(!eligible) return {ok:false,reason:'待機試合はありますが、出場選手が他コートで試合中または配信済みのため、今は配信できません'};
     return {ok:false,reason:'配信対象を確定できませんでした。画面を更新してもう一度お試しください'};
   });
+}
+
+function showDispatchConflict(eventId,courtNo,court){
+  var m=(court&&court.match)||(court&&court.live)||{};
+  var bg=el('div',{className:'detail-modal-bg'}), box=el('div',{className:'detail-modal'});
+  box.appendChild(el('h3',{},'コート '+courtNo+' に既存の試合があります'));
+  box.appendChild(el('div',{style:{fontSize:'13px',color:'var(--ink3)',marginBottom:'12px'}},'画面表示とデータが食い違っています。既存の試合を確認するか、待機列へ戻して次の試合で上書きできます。'));
+  box.appendChild(el('div',{style:{padding:'14px',border:'1px solid var(--rule)',borderRadius:'10px',marginBottom:'14px',background:'#fafafa'}},[
+    el('div',{style:{fontWeight:'700',marginBottom:'6px'}},m.matchCode?('試合 '+m.matchCode):'登録済みの試合'),
+    el('div',{style:{fontSize:'15px',lineHeight:'1.7'}},teamLabel(m.teamA)+'　vs　'+teamLabel(m.teamB)),
+    el('div',{style:{fontSize:'12px',color:'var(--ink3)',marginTop:'5px'}},court.status==='live'?'状態：進行中':'状態：配信済み・開始待ち')
+  ]));
+  var showBtn=el('button',{className:'btn btn-primary',style:{width:'100%',marginBottom:'8px'}},'この試合をコートに表示');
+  showBtn.onclick=function(){
+    showBtn.disabled=true;
+    dbRef(eventId).child('courts').child(String(courtNo)).transaction(function(c){
+      if(!c)return c;
+      if(c.live)return Object.assign({},c,{status:'live'});
+      if(c.match)return Object.assign({},c,{status:'assigned'});
+      return c;
+    }).then(function(){bg.remove();}).catch(function(e){console.error(e);showBtn.disabled=false;alert('試合の表示を復旧できませんでした');});
+  };
+  box.appendChild(showBtn);
+  var overwriteBtn=el('button',{className:'btn',style:{width:'100%',marginBottom:'8px'}},'既存試合を待機列へ戻して上書き');
+  overwriteBtn.onclick=function(){
+    if(court.status==='live' || court.live){ alert('進行中の試合は上書きできません。バドるで「開始取消」を行ってから操作してください。'); return; }
+    if(!confirm('既存の試合を待機列へ戻し、別の試合をこのコートへ配信しますか？'))return;
+    overwriteBtn.disabled=true;
+    dispatchNextToCourt(eventId,courtNo,true).then(function(r){
+      if(r&&r.ok){bg.remove();return;}
+      overwriteBtn.disabled=false; alert((r&&r.reason)||'上書き配信できませんでした');
+    }).catch(function(e){console.error(e);overwriteBtn.disabled=false;alert('上書き配信に失敗しました');});
+  };
+  box.appendChild(overwriteBtn);
+  var close=el('button',{className:'btn',style:{width:'100%'}},'閉じる'); close.onclick=function(){bg.remove();}; box.appendChild(close);
+  bg.onclick=function(e){if(e.target===bg)bg.remove();}; bg.appendChild(box); document.body.appendChild(bg);
 }
 
 /* ══ 配信取りやめ：開始前の試合を待機キューへ戻す ══ */
@@ -1622,6 +1672,7 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,hasDispatchable,p
           // DB更新時はvalue監視で再描画される。配信できなかった場合は理由を明示する。
           if(result && !result.ok){
             if(document.body.contains(dispatchBtn)){ dispatchBtn.disabled=false; dispatchBtn.textContent='配信'; }
+            if(result.conflict){ showDispatchConflict(eventId,courtNo,result.court); return; }
             alert(result.reason||'現在配信できる試合がありません');
             return;
           }
