@@ -72,6 +72,7 @@ input:focus,textarea:focus{outline:none}
 .pill-btn.pill-danger{background:#fdeae4;color:var(--accent)}
 .pill-btn.pill-danger:active{background:#fadad0}
 .settings-inp{border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-size:13px;font-family:var(--mono);width:100%;background:#faf9f7}
+.search-input-wrap{position:relative;width:100%}.search-input-wrap .settings-inp{padding-right:38px}.search-clear{display:none;position:absolute;right:7px;top:50%;transform:translateY(-50%);width:28px;height:28px;border:0;border-radius:50%;background:transparent;color:var(--ink3);font-size:22px;line-height:26px;cursor:pointer;padding:0}.search-clear.show{display:block}.search-clear:hover{background:#eceae6;color:var(--ink)}
 .search-hit{display:flex;align-items:center;gap:8px;padding:8px 4px;font-size:13px;border-bottom:1px solid var(--rule)}
 .search-hit:last-child{border-bottom:none}
 .search-badge{font-size:11px;padding:3px 8px;border-radius:999px;flex-shrink:0;white-space:nowrap}
@@ -3097,13 +3098,27 @@ function buildPlayerSearch(eventId,data,role){
   var wrap = el('div',{className:'settings-section',style:{marginTop:'8px'}});
   wrap.appendChild(el('div',{className:'settings-section-title'},'試合を探す'));
   var box = el('div',{className:'settings-list',style:{padding:'12px 16px'}});
-  var inp = el('input',{id:'playerMatchSearch',className:'settings-inp',placeholder:'選手名の一部もしくは試合Noを入力'});
+  var inputWrap=el('div',{className:'search-input-wrap'});
+  var inp = el('input',{id:'playerMatchSearch',className:'settings-inp',placeholder:'選手名の一部もしくは試合Noを入力',autocomplete:'off'});
   inp.value=playerSearchQuery;
-  inp.oninput = function(){
+  var clearBtn=el('button',{type:'button',className:'search-clear'+(playerSearchQuery?' show':''),title:'入力をクリア','aria-label':'入力をクリア'},'×');
+  function syncSearchValue(doRender){
     playerSearchQuery=inp.value;
+    clearBtn.classList.toggle('show',!!inp.value);
+    if(doRender && !playerSearchComposing) mountProgress(eventId,data,role);
+  }
+  inp.addEventListener('compositionstart',function(){ playerSearchComposing=true; });
+  inp.addEventListener('compositionend',function(){ playerSearchComposing=false; syncSearchValue(true); });
+  inp.addEventListener('input',function(){ syncSearchValue(!playerSearchComposing); });
+  clearBtn.onclick=function(){
+    playerSearchComposing=false;
+    playerSearchQuery='';
+    inp.value='';
+    clearBtn.classList.remove('show');
     mountProgress(eventId,data,role);
+    setTimeout(function(){ var x=document.getElementById('playerMatchSearch'); if(x) x.focus(); },0);
   };
-  box.appendChild(inp);
+  inputWrap.appendChild(inp); inputWrap.appendChild(clearBtn); box.appendChild(inputWrap);
   wrap.appendChild(box);
   return wrap;
 }
@@ -3119,17 +3134,29 @@ function queueMatchSearch(item, query){
 
 var progressRefreshTimer=null;
 var playerSearchQuery='';
+var playerSearchComposing=false;
 var queueFeaturedOnly=false;
 
+function queueFeaturedStorageKey(eventId){
+  return 'taikaiNowFeatured:'+String(eventId||'');
+}
+function getQueueFeaturedIds(eventId){
+  try{
+    var raw=localStorage.getItem(queueFeaturedStorageKey(eventId));
+    var arr=raw?JSON.parse(raw):[];
+    return Array.isArray(arr)?arr.map(String):[];
+  }catch(e){ return []; }
+}
+function isQueueFeatured(eventId,matchId){
+  return getQueueFeaturedIds(eventId).indexOf(String(matchId))>=0;
+}
 function toggleQueueFeatured(eventId, matchId){
-  dbRef(eventId).child('queue').transaction(function(q){
-    if(!q) return q;
-    var arr=toArray(q);
-    for(var i=0;i<arr.length;i++){
-      if(arr[i] && arr[i].id===matchId){ arr[i]=Object.assign({},arr[i],{isFeatured:!arr[i].isFeatured}); break; }
-    }
-    return arr;
-  });
+  var ids=getQueueFeaturedIds(eventId);
+  var id=String(matchId);
+  var pos=ids.indexOf(id);
+  if(pos>=0) ids.splice(pos,1); else ids.push(id);
+  try{ localStorage.setItem(queueFeaturedStorageKey(eventId),JSON.stringify(ids)); }catch(e){}
+  return pos<0;
 }
 
 function predictionDiffLabel(initialTime, latestTs){
@@ -3142,6 +3169,8 @@ function predictionDiffLabel(initialTime, latestTs){
 }
 
 function mountProgress(eventId,data,role){
+  // IME変換中にDOMを再描画すると未確定文字列が1文字ずつ確定されるため、変換終了まで描画を保留する。
+  if(playerSearchComposing && document.activeElement && document.activeElement.id==='playerMatchSearch') return;
   var isAdmin=role==='admin';
   var root=el('div',{style:{minHeight:'100vh'}});
   var helpBtn = el('button',{className:'appbar-help-btn'},'?');
@@ -3222,15 +3251,16 @@ function mountProgress(eventId,data,role){
   qHead.appendChild(featureBtn);
   root.appendChild(qHead);
   var queueWrap=el('div');
-  var visibleQueue=queueFeaturedOnly?searchedQueue.filter(function(m){return !!m.isFeatured;}):searchedQueue;
+  var visibleQueue=queueFeaturedOnly?searchedQueue.filter(function(m){return isQueueFeatured(eventId,m.id);}):searchedQueue;
   visibleQueue.forEach(function(m){
     var latestTs = dynamicEstimates && dynamicEstimates[m.id] ? dynamicEstimates[m.id] : null;
     var timeLabel = latestTs ? fmtHHMM(latestTs)+'頃' : (m.time||'');
     var diff=predictionDiffLabel(m.time,latestTs);
     var timeBox=el('span',{className:'queue-time'},timeLabel);
     if(diff) timeBox.appendChild(el('span',{className:'queue-diff '+diff.cls},diff.text));
-    var star=el('button',{className:'queue-star'+(m.isFeatured?' on':''),title:m.isFeatured?'注目を解除':'注目に登録'},m.isFeatured?'★':'☆');
-    star.onclick=function(){ toggleQueueFeatured(eventId,m.id); };
+    var featured=isQueueFeatured(eventId,m.id);
+    var star=el('button',{className:'queue-star'+(featured?' on':''),title:featured?'注目を解除':'注目に登録'},featured?'★':'☆');
+    star.onclick=function(){ toggleQueueFeatured(eventId,m.id); mountProgress(eventId,data,role); };
     queueWrap.appendChild(el('div',{className:'queue-row'},[
       star,
       el('span',{className:'queue-idx'},m.matchCode||'—'),
