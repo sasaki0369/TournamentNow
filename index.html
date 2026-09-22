@@ -1693,6 +1693,7 @@ extraStyle.textContent = [
   '.tournament-arrow{display:none}',
   '.tournament-game{--path:#c9c9c5}',
   '.tournament-game.tournament-search-hit{outline:3px solid #2563eb;outline-offset:2px;box-shadow:0 0 0 5px rgba(37,99,235,.12)}',
+  '.tournament-game.tournament-search-current{outline-width:4px;box-shadow:0 0 0 8px rgba(37,99,235,.18),0 8px 24px rgba(0,0,0,.18)}',
   '.tournament-game.progressed{--path:#e22}',
   '.tournament-game:not(.last-round)::after{display:none}',
   '.tournament-pair{position:relative;display:flex;flex-direction:column;justify-content:space-around;gap:22px;flex:1}',
@@ -2414,16 +2415,46 @@ function buildTournamentView(eventId, data, isAdmin){
   var leagueSearchWrap=el('div',{style:{padding:'8px 18px 6px'}});
   var leagueSearch=el('input',{className:'field-inp',type:'search',placeholder:'リーグ名・トーナメント名または選手名を入力',value:leagueSearchText,style:{width:'100%'}});
   var composing=false;
+  var tournamentSearchHitIndex=0;
+  var tournamentSearchLastQuery='';
   leagueSearch.addEventListener('compositionstart',function(){composing=true;});
-  leagueSearch.addEventListener('compositionend',function(){composing=false; leagueSearchText=leagueSearch.value; applyLeagueFilter();});
-  leagueSearch.addEventListener('input',function(){ if(!composing){ leagueSearchText=leagueSearch.value; applyLeagueFilter(); } });
+  leagueSearch.addEventListener('compositionend',function(){composing=false; leagueSearchText=leagueSearch.value; tournamentSearchHitIndex=0; applyLeagueFilter(true);});
+  leagueSearch.addEventListener('input',function(){ if(!composing){ leagueSearchText=leagueSearch.value; tournamentSearchHitIndex=0; applyLeagueFilter(true); } });
   function leagueMatchesSearch(lg){
     var q=(leagueSearchText||'').trim().toLowerCase();
     if(!q) return true;
     var hay=[lg.name||''].concat((lg.participants||[]).map(function(team){return teamLabel(team);})).join(' ').toLowerCase();
     return hay.indexOf(q)>=0;
   }
-  function applyLeagueFilter(){
+  function getTournamentSearchHits(){
+    if(!tournamentList) return [];
+    return Array.prototype.slice.call(tournamentList.querySelectorAll('.tournament-search-item:not([style*=\"display: none\"]) .tournament-game.tournament-search-hit'));
+  }
+  function focusTournamentSearchHit(index, smooth){
+    var hits=getTournamentSearchHits();
+    if(!hits.length) return;
+    tournamentSearchHitIndex=((index%hits.length)+hits.length)%hits.length;
+    hits.forEach(function(g,i){g.classList.toggle('tournament-search-current',i===tournamentSearchHitIndex);});
+    var target=hits[tournamentSearchHitIndex];
+    if(target && target.scrollIntoView){
+      target.scrollIntoView({behavior:smooth===false?'auto':'smooth',block:'center',inline:'center'});
+    }
+  }
+  function bindTournamentSearchNavigation(){
+    var hits=getTournamentSearchHits();
+    hits.forEach(function(g){
+      if(g.getAttribute('data-search-nav-bound')==='1') return;
+      g.setAttribute('data-search-nav-bound','1');
+      g.addEventListener('click',function(ev){
+        var currentHits=getTournamentSearchHits();
+        if(currentHits.length>1 && (leagueSearchText||'').trim()){
+          ev.preventDefault(); ev.stopPropagation();
+          focusTournamentSearchHit(tournamentSearchHitIndex+1,true);
+        }
+      },true);
+    });
+  }
+  function applyLeagueFilter(autoFocus){
     if(leagueList){
       Array.prototype.forEach.call(leagueList.querySelectorAll('.league-card'),function(card){
         var lid=card.getAttribute('data-league-id'), lg=leagues[lid];
@@ -2467,6 +2498,19 @@ function buildTournamentView(eventId, data, isAdmin){
         var connector=card.querySelector('.tournament-connectors');
         if(connector) connector.style.display='';
       });
+      var activeQ=(leagueSearchText||'').trim().toLowerCase();
+      if(activeQ){
+        if(activeQ!==tournamentSearchLastQuery){ tournamentSearchHitIndex=0; tournamentSearchLastQuery=activeQ; }
+        bindTournamentSearchNavigation();
+        var hits=getTournamentSearchHits();
+        if(hits.length){
+          if(tournamentSearchHitIndex>=hits.length) tournamentSearchHitIndex=0;
+          hits.forEach(function(g,i){g.classList.toggle('tournament-search-current',i===tournamentSearchHitIndex);});
+          if(autoFocus){ requestAnimationFrame(function(){ focusTournamentSearchHit(tournamentSearchHitIndex,true); }); }
+        }
+      }else{
+        tournamentSearchLastQuery=''; tournamentSearchHitIndex=0;
+      }
     }
   }
   leagueSearchWrap.appendChild(leagueSearch); wrap.appendChild(leagueSearchWrap);
