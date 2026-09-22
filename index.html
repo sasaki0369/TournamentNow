@@ -3131,6 +3131,26 @@ function buildPlayerChangeManager(eventId,data){
   section.appendChild(box); return section;
 }
 
+function getWithdrawalPairMembers(data, name){
+  var members = {};
+  if(name) members[name]=true;
+  function inspect(team){
+    var t=toArray(team).filter(Boolean);
+    if(t.length===2 && t.indexOf(name)>=0){ t.forEach(function(n){ members[n]=true; }); }
+  }
+  Object.keys(data.leagues||{}).forEach(function(lid){
+    toArray(data.leagues[lid].participants).forEach(inspect);
+  });
+  toArray(data.queue).forEach(function(m){ if(m){ inspect(m.teamA); inspect(m.teamB); } });
+  Object.keys(data.brackets||{}).forEach(function(bid){
+    toArray(data.brackets[bid].matches).forEach(function(m){ if(m){ inspect(m.teamA); inspect(m.teamB); } });
+  });
+  Object.keys(data.courts||{}).forEach(function(cno){
+    var c=data.courts[cno]; if(c&&c.match){ inspect(c.match.teamA); inspect(c.match.teamB); }
+  });
+  return Object.keys(members);
+}
+
 function buildWithdrawalManager(eventId, data){
   var section = el('div',{className:'settings-section'});
   section.appendChild(el('div',{className:'settings-section-title'},'棄権（不戦敗）'));
@@ -3145,7 +3165,7 @@ function buildWithdrawalManager(eventId, data){
       var undoBtn = el('button',{className:'pill-btn'},'取り消す');
       undoBtn.onclick=function(){
         var next = Object.assign({}, withdrawn);
-        delete next[name];
+        getWithdrawalPairMembers(data,name).forEach(function(n){ delete next[n]; });
         dbRef(eventId).child('withdrawnPlayers').set(next);
       };
       list.appendChild(el('div',{className:'search-hit'},[
@@ -3174,7 +3194,7 @@ function buildWithdrawalManager(eventId, data){
   function registerWithdrawal(name){
     if(!name) return;
     var next = Object.assign({}, withdrawn);
-    next[name] = true;
+    getWithdrawalPairMembers(data,name).forEach(function(n){ next[n]=true; });
     dbRef(eventId).child('withdrawnPlayers').set(next).then(function(){ inp.value=''; suggestWrap.innerHTML=''; });
   }
   var addBtn = el('button',{className:'pill-btn pill-danger',style:{marginTop:'8px'}},'この名前で棄権登録');
@@ -3230,7 +3250,7 @@ function buildWithdrawalManager(eventId, data){
       var undoBtn = el('button',{className:'pill-btn'},'取り消す');
       undoBtn.onclick=function(){
         var next = Object.assign({}, withdrawn);
-        delete next[name];
+        getWithdrawalPairMembers(data,name).forEach(function(n){ delete next[n]; });
         dbRef(eventId).child('withdrawnPlayers').set(next);
       };
       list.appendChild(el('div',{className:'search-hit'},[
@@ -3259,7 +3279,7 @@ function buildWithdrawalManager(eventId, data){
   function registerWithdrawal(name){
     if(!name) return;
     var next = Object.assign({}, withdrawn);
-    next[name] = true;
+    getWithdrawalPairMembers(data,name).forEach(function(n){ next[n]=true; });
     dbRef(eventId).child('withdrawnPlayers').set(next).then(function(){ inp.value=''; suggestWrap.innerHTML=''; });
   }
   var addBtn = el('button',{className:'pill-btn pill-danger',style:{marginTop:'8px'}},'この名前で棄権登録');
