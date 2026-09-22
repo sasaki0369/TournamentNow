@@ -3093,44 +3093,28 @@ function searchPlayerMatches(data, query){
   return results;
 }
 
-function buildPlayerSearch(data){
+function buildPlayerSearch(eventId,data,role){
   var wrap = el('div',{className:'settings-section',style:{marginTop:'8px'}});
   wrap.appendChild(el('div',{className:'settings-section-title'},'試合を探す'));
   var box = el('div',{className:'settings-list',style:{padding:'12px 16px'}});
   var inp = el('input',{id:'playerMatchSearch',className:'settings-inp',placeholder:'選手名の一部もしくは試合Noを入力'});
   inp.value=playerSearchQuery;
-  var resultsWrap = el('div',{style:{marginTop:'10px'}});
-
-  function renderResults(){
-    resultsWrap.innerHTML = '';
-    var matches = searchPlayerMatches(data, inp.value);
-    if(!inp.value.trim()){
-      return;
-    }
-    if(matches.length===0){
-      resultsWrap.appendChild(el('div',{style:{fontSize:13,color:'var(--ink3)',padding:'6px 0'}},'該当する試合が見つかりません。'));
-      return;
-    }
-    matches.forEach(function(m){
-      var line;
-      if(m.status==='live'){
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge live'},'進行中'), (m.matchCode?m.matchCode+'　':'')+'コート'+m.courtNo+'　vs '+m.opponent]);
-      }else if(m.status==='assigned'){
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge live'},'開始待ち'), (m.matchCode?m.matchCode+'　':'')+'コート'+m.courtNo+'　vs '+m.opponent]);
-      }else if(m.status==='queued'){
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge queued'},'待機中'), (m.matchCode?m.matchCode+'　':'')+(m.time?m.time+'　':'')+'vs '+m.opponent]);
-      }else{
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge done'},'結果'), (m.matchCode?m.matchCode+'　':'')+m.resultLabel+'　vs '+m.opponent]);
-      }
-      resultsWrap.appendChild(line);
-    });
-  }
-  inp.oninput = function(){ playerSearchQuery=inp.value; renderResults(); };
-  if(playerSearchQuery) renderResults();
+  inp.oninput = function(){
+    playerSearchQuery=inp.value;
+    mountProgress(eventId,data,role);
+  };
   box.appendChild(inp);
-  box.appendChild(resultsWrap);
   wrap.appendChild(box);
   return wrap;
+}
+
+function queueMatchSearch(item, query){
+  var q=(query||'').trim().toLowerCase();
+  if(!q) return true;
+  var fields=[];
+  fields.push(item && item.matchCode ? String(item.matchCode) : '');
+  toArray(item && item.teamA).concat(toArray(item && item.teamB)).forEach(function(n){ if(n) fields.push(String(n)); });
+  return fields.some(function(v){ return v.toLowerCase().indexOf(q)>=0; });
 }
 
 var progressRefreshTimer=null;
@@ -3207,15 +3191,18 @@ function mountProgress(eventId,data,role){
     return;
   }
 
-  root.appendChild(buildPlayerSearch(data));
+  root.appendChild(buildPlayerSearch(eventId,data,role));
 
-  root.appendChild(el('div',{className:'section-label'},'コート状況'));
-  var grid=el('div',{className:'court-grid'});
-  var courtCount=data.courtCount||0;
-  for(var i=1;i<=courtCount;i++){
-    grid.appendChild(buildCourtCard(i,(data.courts||{})[String(i)],eventId,isAdmin,toArray(data.queue).length>0,data.playerClubs||{}));
+  var searchQuery=(playerSearchQuery||'').trim();
+  if(!searchQuery){
+    root.appendChild(el('div',{className:'section-label'},'コート状況'));
+    var grid=el('div',{className:'court-grid'});
+    var courtCount=data.courtCount||0;
+    for(var i=1;i<=courtCount;i++){
+      grid.appendChild(buildCourtCard(i,(data.courts||{})[String(i)],eventId,isAdmin,toArray(data.queue).length>0,data.playerClubs||{}));
+    }
+    root.appendChild(grid);
   }
-  root.appendChild(grid);
 
   var queue=toArray(data.queue);
   var queueSorted=queue.slice().sort(function(a,b){
@@ -3226,7 +3213,8 @@ function mountProgress(eventId,data,role){
     return ma-mb;
   });
   var dynamicEstimates = estimateQueueStartTimes(data, queueSorted);
-  var queueLabel = dynamicEstimates ? 'キュー待ち（残り'+queue.length+'件・実績ペースによる予測）' : 'キュー待ち（残り'+queue.length+'件・予測時刻の早い順）';
+  var searchedQueue=searchQuery?queueSorted.filter(function(m){return queueMatchSearch(m,searchQuery);}):queueSorted;
+  var queueLabel = searchQuery ? 'キュー待ち（検索結果 '+searchedQueue.length+'件）' : (dynamicEstimates ? 'キュー待ち（残り'+queue.length+'件・実績ペースによる予測）' : 'キュー待ち（残り'+queue.length+'件・予測時刻の早い順）');
   var qHead=el('div',{className:'queue-head'});
   qHead.appendChild(el('div',{className:'section-label'},queueLabel));
   var featureBtn=el('button',{className:'queue-filter'+(queueFeaturedOnly?' on':'')},queueFeaturedOnly?'★ 全て表示':'☆ 注目のみ表示');
@@ -3234,7 +3222,7 @@ function mountProgress(eventId,data,role){
   qHead.appendChild(featureBtn);
   root.appendChild(qHead);
   var queueWrap=el('div');
-  var visibleQueue=queueFeaturedOnly?queueSorted.filter(function(m){return !!m.isFeatured;}):queueSorted;
+  var visibleQueue=queueFeaturedOnly?searchedQueue.filter(function(m){return !!m.isFeatured;}):searchedQueue;
   visibleQueue.forEach(function(m){
     var latestTs = dynamicEstimates && dynamicEstimates[m.id] ? dynamicEstimates[m.id] : null;
     var timeLabel = latestTs ? fmtHHMM(latestTs)+'頃' : (m.time||'');
@@ -3252,6 +3240,8 @@ function mountProgress(eventId,data,role){
   });
   if(queue.length===0){
     queueWrap.appendChild(el('div',{style:{padding:'12px 18px',color:'var(--ink3)',fontSize:13}},'キューは空です'));
+  }else if(searchQuery && visibleQueue.length===0){
+    queueWrap.appendChild(el('div',{style:{padding:'12px 18px',color:'var(--ink3)',fontSize:13}},queueFeaturedOnly?'検索条件に一致する注目試合はありません':'該当するキュー待ちの試合はありません'));
   }else if(queueFeaturedOnly && visibleQueue.length===0){
     queueWrap.appendChild(el('div',{style:{padding:'12px 18px',color:'var(--ink3)',fontSize:13}},'注目試合はありません'));
   }
