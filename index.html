@@ -1692,6 +1692,7 @@ extraStyle.textContent = [
   '.tournament-team-score{font-family:var(--mono);font-size:12px;font-weight:800;color:var(--ink2)}',
   '.tournament-arrow{display:none}',
   '.tournament-game{--path:#c9c9c5}',
+  '.tournament-game.tournament-search-hit{outline:3px solid #2563eb;outline-offset:2px;box-shadow:0 0 0 5px rgba(37,99,235,.12)}',
   '.tournament-game.progressed{--path:#e22}',
   '.tournament-game:not(.last-round)::after{display:none}',
   '.tournament-pair{position:relative;display:flex;flex-direction:column;justify-content:space-around;gap:22px;flex:1}',
@@ -2451,23 +2452,20 @@ function buildTournamentView(eventId, data, isAdmin){
           var connector1=card.querySelector('.tournament-connectors'); if(connector1) connector1.style.display='';
           return;
         }
-        var any=false;
-        games.forEach(function(g){
-          // #winner参照やシードでは、画面描画時に初めて選手名が解決されることがある。
-          // 保存済み検索文字列に加えて、実際に表示されている文字列も検索対象にする。
-          var hay=((g.getAttribute('data-search-text')||'')+' '+(g.textContent||'')).toLowerCase();
-          var hit=hay.indexOf(q)>=0;
-          g.style.display=hit?'':'none';
-          if(hit) any=true;
-        });
-        Array.prototype.forEach.call(card.querySelectorAll('.tournament-pair'),function(p){
-          var visible=Array.prototype.some.call(p.querySelectorAll('.tournament-game'),function(g){return g.style.display!=='none';});
-          p.style.display=visible?'':'none';
-        });
-        // 抽出時は非表示試合への接続線だけが残らないよう線を隠す。
-        var connector=card.querySelector('.tournament-connectors');
-        if(connector) connector.style.display=any?'none':'';
+        // 選手名検索は、トーナメント表の途中の試合だけを display:none にすると
+        // ブラケットの幾何配置と接続線が崩れるため、該当選手を含むトーナメント単位で抽出する。
+        // 検索判定には、元データ・slot解決後の選手名・実際の描画文字列のすべてを使う。
+        var cardHay=((card.getAttribute('data-search-text')||'')+' '+(card.textContent||'')).toLowerCase();
+        var any=cardHay.indexOf(q)>=0;
         card.style.display=any?'':'none';
+        games.forEach(function(g){
+          g.style.display='';
+          var hay=((g.getAttribute('data-search-text')||'')+' '+(g.textContent||'')).toLowerCase();
+          g.classList.toggle('tournament-search-hit', any && hay.indexOf(q)>=0);
+        });
+        Array.prototype.forEach.call(card.querySelectorAll('.tournament-pair'),function(p){p.style.display='';});
+        var connector=card.querySelector('.tournament-connectors');
+        if(connector) connector.style.display='';
       });
     }
   }
