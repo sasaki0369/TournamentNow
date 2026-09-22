@@ -1560,11 +1560,20 @@ function setCourtActive(eventId,courtNo,active){
 }
 
 /* ══ コートカード描画 ══ */
-function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs){
+function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs,badoruBaseUrl){
   court=court||{status:'idle'};
   var statusClass=court.status==='live'?'live':(court.status==='assigned'?'assigned':(court.status==='inactive'?'inactive':'idle'));
   var statusLabel=court.status==='live'?'進行中':(court.status==='assigned'?'配信済み・開始待ち':(court.status==='inactive'?'使用終了':'空き'));
   var card=el('div',{className:'court-card st-'+statusClass});
+  // カードのボタン等以外をタップすると、そのコート専用のバドる連携QRを表示する。
+  card.setAttribute('title','タップでコート '+courtNo+' のQRコードを表示');
+  card.onclick=function(e){
+    var interactive=e.target && e.target.closest ? e.target.closest('button,a,input,select,textarea,label') : null;
+    if(interactive) return;
+    var baseUrl=(badoruBaseUrl||DEFAULT_BADORU_URL).replace(/\/?$/, '/');
+    var link=baseUrl+'?taikaEvent='+encodeURIComponent(eventId)+'&court='+courtNo+'&fullscreen=1';
+    showQrModal('コート '+courtNo+' の連携リンク',link);
+  };
   card.appendChild(el('div',{className:'court-no'},'コート '+courtNo));
   var statusChildren=[el('span',{className:'court-dot '+(statusClass==='live'?'live':'')}), statusLabel];
   if(court.status==='live' && court.startedAt){
@@ -1665,6 +1674,8 @@ extraStyle.textContent = [
   '.court-cancel-dispatch-btn{width:100%;margin-top:10px;padding:10px 14px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#4b5563;font-size:13px;font-weight:800;cursor:pointer}',
   '.court-cancel-dispatch-btn:disabled{opacity:.55;cursor:default}',
   '.court-card.st-inactive{background:#f3f4f6;border-color:#d1d5db;opacity:.88}',
+  '.court-card{cursor:pointer}',
+  '.court-card button,.court-card a,.court-card input,.court-card select,.court-card textarea{cursor:auto}',
   '.court-status.inactive{background:#e5e7eb;color:#4b5563}',
   '.court-stop-btn,.court-resume-btn{width:100%;margin-top:7px;padding:9px 12px;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer}',
   '.court-stop-btn{background:#fff;color:#6b7280;border:1px solid #d1d5db}',
@@ -3521,7 +3532,7 @@ function mountProgress(eventId,data,role){
     var grid=el('div',{className:'court-grid'});
     var courtCount=data.courtCount||0;
     for(var i=1;i<=courtCount;i++){
-      grid.appendChild(buildCourtCard(i,(data.courts||{})[String(i)],eventId,isAdmin,toArray(data.queue).length>0,data.playerClubs||{}));
+      grid.appendChild(buildCourtCard(i,(data.courts||{})[String(i)],eventId,isAdmin,toArray(data.queue).length>0,data.playerClubs||{},data.badoruBaseUrl||DEFAULT_BADORU_URL));
     }
     root.appendChild(grid);
   }
