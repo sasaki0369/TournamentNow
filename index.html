@@ -240,6 +240,20 @@ input:focus,textarea:focus{outline:none}
   .demo-kami-foot{position:fixed;left:0;right:0;bottom:0;z-index:5;height:46px;box-sizing:border-box;padding:4px 10px;background:#08101d}
   .demo-kami-foot .btn{padding:6px 8px}
 }
+
+/* 運営者向けQR読み取り（PWA内カメラ） */
+.admin-qr-entry{margin:0 18px 12px;padding:12px 14px;border:1px solid var(--rule);border-radius:10px;background:#fff}
+.admin-qr-entry .btn{width:100%}
+.admin-qr-entry-note{margin-top:7px;font-size:12px;color:var(--ink3);line-height:1.5}
+.admin-qr-scan-overlay{display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.78);align-items:center;justify-content:center;padding:16px;box-sizing:border-box}
+.admin-qr-scan-overlay.show{display:flex}
+.admin-qr-scan-panel{width:min(560px,96vw);background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.35)}
+.admin-qr-scan-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;font-size:16px}
+.admin-qr-scan-close{border:1px solid var(--rule);background:#fff;border-radius:8px;padding:7px 12px;font-weight:700}
+.admin-qr-video-wrap{position:relative;background:#111;aspect-ratio:4/3;overflow:hidden}
+.admin-qr-video-wrap video{width:100%;height:100%;object-fit:cover;display:block}
+.admin-qr-guide{position:absolute;left:50%;top:50%;width:min(62%,280px);aspect-ratio:1;transform:translate(-50%,-50%);border:4px solid #fff;border-radius:12px;box-shadow:0 0 0 999px rgba(0,0,0,.18)}
+.admin-qr-scan-msg{padding:12px 14px;text-align:center;font-size:13px;color:var(--ink2)}
 </style>
 </head>
 <body>
@@ -1344,6 +1358,12 @@ function createDemoEvent(){
 function mountSetup(){
   var wrap=el('div',{className:'setup-wrap'});
   wrap.appendChild(el('div',{className:'section-title'},'大会Now - 新しい大会を作成'));
+
+  var adminQrEntry=el('div',{className:'admin-qr-entry'});
+  var adminQrBtn=el('button',{className:'btn btn-outline',type:'button'},'運営者向けQRコードを読み取る');
+  var adminQrMsg=el('div',{className:'admin-qr-entry-note'},'別端末の大会Nowで表示した「運営者向け共有リンク」のQRコードを読み取ると、その大会の運営画面をこの端末で開きます。');
+  adminQrBtn.onclick=function(){ startAdminQrScan(adminQrMsg); };
+  adminQrEntry.appendChild(adminQrBtn); adminQrEntry.appendChild(adminQrMsg); wrap.appendChild(adminQrEntry);
 
   var nameLabel=el('div',{className:'field-label'},'大会名');
   var nameInp=el('input',{className:'field-inp',placeholder:'第26回 ○○バドミントン大会'});
@@ -2683,6 +2703,59 @@ function showHelpModal(){
     html += '<ul class="help-list">' + lines.map(function(l){return '<li>'+l+'</li>';}).join('') + '</ul></div>';
     return html;
   }
+}
+
+var adminQrScanStream=null, adminQrScanRAF=0, adminQrDetector=null, adminQrJsLoading=null, adminQrScanMessageTarget=null;
+function stopAdminQrScan(){
+  if(adminQrScanRAF){cancelAnimationFrame(adminQrScanRAF);adminQrScanRAF=0;}
+  if(adminQrScanStream){adminQrScanStream.getTracks().forEach(function(t){t.stop();});adminQrScanStream=null;}
+  var ov=document.getElementById('adminQrScanOverlay'),v=document.getElementById('adminQrScanVideo');
+  if(v){try{v.pause();v.srcObject=null;}catch(e){}}
+  if(ov){ov.classList.remove('show');ov.setAttribute('aria-hidden','true');}
+}
+function ensureAdminQrOverlay(){
+  var old=document.getElementById('adminQrScanOverlay'); if(old)return old;
+  var ov=el('div',{className:'admin-qr-scan-overlay',id:'adminQrScanOverlay','aria-hidden':'true'});
+  var panel=el('div',{className:'admin-qr-scan-panel'}),head=el('div',{className:'admin-qr-scan-head'});
+  head.appendChild(el('strong',{},'運営者向けQR読み取り'));
+  var close=el('button',{className:'admin-qr-scan-close',type:'button'},'閉じる');close.onclick=stopAdminQrScan;head.appendChild(close);panel.appendChild(head);
+  var vw=el('div',{className:'admin-qr-video-wrap'}),video=el('video',{id:'adminQrScanVideo',playsinline:'',muted:''});video.setAttribute('playsinline','');video.muted=true;vw.appendChild(video);vw.appendChild(el('div',{className:'admin-qr-guide'}));panel.appendChild(vw);
+  panel.appendChild(el('div',{className:'admin-qr-scan-msg',id:'adminQrScanMsg'},'運営者向け共有リンクのQRコードを枠内に入れてください'));
+  ov.appendChild(panel);ov.onclick=function(e){if(e.target===ov)stopAdminQrScan();};document.body.appendChild(ov);return ov;
+}
+function parseAdminQrEventId(text){
+  var raw=String(text||'').trim(),u;try{u=new URL(raw,location.href);}catch(e){return '';}
+  var h=(u.hash||'').replace(/^#/,'');
+  var m=h.match(/^admin:([^/?#]+)/); if(m&&m[1])return decodeURIComponent(m[1]);
+  return '';
+}
+function applyAdminQrText(text){
+  var eventId=parseAdminQrEventId(text); if(!eventId)throw new Error('運営者向け共有リンクのQRコードではありません');
+  stopAdminQrScan();
+  if(adminQrScanMessageTarget)adminQrScanMessageTarget.textContent='QRコードを読み取りました。大会の運営画面を開きます。';
+  location.hash='admin:'+eventId; startAdmin(eventId);
+}
+function loadAdminJsQR(){
+  if(window.jsQR)return Promise.resolve(); if(adminQrJsLoading)return adminQrJsLoading;
+  adminQrJsLoading=new Promise(function(resolve,reject){var sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';sc.onload=resolve;sc.onerror=function(){reject(new Error('QR読み取り機能を読み込めませんでした'));};document.head.appendChild(sc);});return adminQrJsLoading;
+}
+async function scanAdminQrFrame(){
+  if(!adminQrScanStream)return; var video=document.getElementById('adminQrScanVideo');
+  try{
+    if(adminQrDetector){var codes=await adminQrDetector.detect(video);if(codes&&codes[0]&&codes[0].rawValue){applyAdminQrText(codes[0].rawValue);return;}}
+    else if(window.jsQR&&video&&video.readyState>=2){var c=document.createElement('canvas'),w=video.videoWidth,h=video.videoHeight;if(w&&h){c.width=w;c.height=h;var x=c.getContext('2d',{willReadFrequently:true});x.drawImage(video,0,0,w,h);var im=x.getImageData(0,0,w,h),code=window.jsQR(im.data,w,h,{inversionAttempts:'dontInvert'});if(code&&code.data){applyAdminQrText(code.data);return;}}}
+  }catch(e){if(!adminQrScanStream)return; if(e&&e.message&&/運営者向け/.test(e.message)){var msg=document.getElementById('adminQrScanMsg');if(msg)msg.textContent=e.message+'。正しいQRコードを映してください。';}}
+  adminQrScanRAF=requestAnimationFrame(scanAdminQrFrame);
+}
+async function startAdminQrScan(messageTarget){
+  adminQrScanMessageTarget=messageTarget||null; var ov=ensureAdminQrOverlay(),msg=document.getElementById('adminQrScanMsg'),video=document.getElementById('adminQrScanVideo');
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){if(messageTarget)messageTarget.textContent='この端末ではカメラ読み取りを利用できません。';return;}
+  ov.classList.add('show');ov.setAttribute('aria-hidden','false');if(msg)msg.textContent='カメラを準備しています…';
+  try{
+    adminQrDetector=null;if('BarcodeDetector' in window){try{var formats=await BarcodeDetector.getSupportedFormats();if(formats.indexOf('qr_code')>=0)adminQrDetector=new BarcodeDetector({formats:['qr_code']});}catch(e){}}
+    if(!adminQrDetector)await loadAdminJsQR();
+    adminQrScanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});video.srcObject=adminQrScanStream;await video.play();if(msg)msg.textContent='運営者向け共有リンクのQRコードを枠内に入れてください';scanAdminQrFrame();
+  }catch(e){stopAdminQrScan();if(messageTarget)messageTarget.textContent=(e&&(e.name==='NotAllowedError'||e.name==='PermissionDeniedError'))?'カメラの使用が許可されていません。iPadの設定で大会Nowのカメラ利用を許可してください。':'QRコード読み取りを開始できませんでした。';}
 }
 
 function showQrModal(title, url){
