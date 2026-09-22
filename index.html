@@ -1483,9 +1483,13 @@ function dispatchNextToCourt(eventId,courtNo,forceOverwrite){
     var existingLive=court.live||null;
     if((court.status!=='idle' || existingMatch || existingLive) && !forceOverwrite)return data;
     var queue=toArray(data.queue).slice();
-    if(forceOverwrite && existingMatch){
-      // 既存試合は待機列へ戻さず破棄する。
-      // 必要なら「この試合をコートに表示」してから通常の「配信取りやめ」で待機列へ戻せる。
+    if(forceOverwrite && (existingMatch || existingLive)){
+      // 強制上書き。バドる側が進行中でも forcedTermination を検知して即時終了できるよう通知を残す。
+      var oldMatch=existingMatch||existingLive||{};
+      court=Object.assign({},court,{forcedTermination:{
+        at:Date.now(), reason:'operator_overwrite', matchCode:oldMatch.matchCode||'',
+        teamA:toArray(oldMatch.teamA), teamB:toArray(oldMatch.teamB)
+      }});
     }
     court=Object.assign({},court,{status:'idle',match:null,live:null,startedAt:null});
     courts[key]=court;
@@ -1519,8 +1523,13 @@ function dispatchNextToCourt(eventId,courtNo,forceOverwrite){
       teamAClubs:toArray(picked.teamA).map(function(n){return clubs[n]||'';}),
       teamBClubs:toArray(picked.teamB).map(function(n){return clubs[n]||'';})
     });
-    courts[key]=Object.assign({},court,{status:'assigned',match:picked,live:null,assignedAt:Date.now(),startedAt:null});
-    return Object.assign({},data,{queue:queue,courts:courts});
+    // コート状態を唯一の正（SSOT）にする。配信ごとに単調増加する assignmentId を発行し、
+    // バドるから届く開始・得点・終了更新が「現在の配信」に対するものか検証できるようにする。
+    var assignmentSeq=(Number(data.assignmentSeq)||0)+1;
+    var assignmentId=String(eventId)+':'+key+':'+assignmentSeq;
+    picked=Object.assign({},picked,{assignmentId:assignmentId});
+    courts[key]=Object.assign({},court,{status:'assigned',match:picked,live:null,assignmentId:assignmentId,assignedAt:Date.now(),startedAt:null,updatedAt:Date.now()});
+    return Object.assign({},data,{queue:queue,courts:courts,assignmentSeq:assignmentSeq,updatedAt:Date.now()});
   }).then(function(result){
     // transaction自体が正常終了しても、選手重複などで配信対象が無い場合はDBが実質変わらない。
     // その場合を「成功」と見せず、運営者に理由を返す。
@@ -1567,8 +1576,7 @@ function showDispatchConflict(eventId,courtNo,court){
   box.appendChild(showBtn);
   var overwriteBtn=el('button',{className:'btn btn-primary',style:{width:'100%',marginBottom:'8px'}},'既存試合を消去して上書き');
   overwriteBtn.onclick=function(){
-    if(court.status==='live' || court.live){ alert('進行中の試合は上書きできません。バドるで「開始取消」を行ってから操作してください。'); return; }
-    if(!confirm('既存の試合を消去し、別の試合をこのコートへ配信しますか？\n\n※消去した試合は待機列には戻りません。'))return;
+    if(!confirm('既存の試合を強制終了して消去し、別の試合をこのコートへ配信しますか？\n\n※バドるで進行中の場合も強制終了します。\n※消去した試合は待機列には戻りません。'))return;
     overwriteBtn.disabled=true;
     dispatchNextToCourt(eventId,courtNo,true).then(function(r){
       if(r&&r.ok){bg.remove();return;}
@@ -1599,7 +1607,7 @@ function cancelCourtDispatch(eventId,courtNo){
       return rid ? qid===rid : JSON.stringify(q)===JSON.stringify(returned);
     });
     if(!exists)queue.push(returned);
-    courts[key]=Object.assign({},court,{status:'idle',match:null,live:null,assignedAt:null,startedAt:null,updatedAt:Date.now()});
+    courts[key]=Object.assign({},court,{status:'idle',match:null,live:null,assignmentId:null,assignedAt:null,startedAt:null,updatedAt:Date.now()});
     return Object.assign({},cur,{queue:queue,courts:courts,updatedAt:Date.now()});
   });
 }
@@ -1618,6 +1626,7 @@ function setCourtActive(eventId,courtNo,active){
       status:active?'idle':'inactive',
       match:null,
       live:null,
+      assignmentId:null,
       assignedAt:null,
       startedAt:null
     });
