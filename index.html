@@ -129,7 +129,7 @@ input:focus,textarea:focus{outline:none}
 .court-player-name{display:block;width:100%;font-size:15px;font-weight:750;line-height:1.22;white-space:nowrap;letter-spacing:-.02em}
 .court-player-club{display:block;width:100%;font-size:10.5px;font-weight:500;line-height:1.2;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .court-player-name.fit-small{font-size:13px}
-.court-vs{display:flex;align-items:center;justify-content:center;color:var(--ink3);font-weight:700;font-size:11px;letter-spacing:.04em;align-self:stretch}
+.court-vs{display:flex;align-items:center;justify-content:center;color:var(--ink3);font-weight:700;font-size:11px;letter-spacing:.04em;align-self:stretch;height:100%}
 @media(max-width:420px){.court-player-name{font-size:14px}.court-player-name.fit-small{font-size:12px}.court-player-club{font-size:10px}.court-teams{grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr);gap:4px}}
 .court-score{font-family:var(--mono);font-size:26px;font-weight:500;color:var(--ink);margin-top:6px;letter-spacing:-.02em}
 .court-gamewins{font-family:var(--mono);font-size:12px;color:var(--ink3);margin-top:2px}
@@ -260,6 +260,13 @@ input:focus,textarea:focus{outline:none}
 .admin-qr-video-wrap video{width:100%;height:100%;object-fit:cover;display:block}
 .admin-qr-guide{position:absolute;left:50%;top:50%;width:min(62%,280px);aspect-ratio:1;transform:translate(-50%,-50%);border:4px solid #fff;border-radius:12px;box-shadow:0 0 0 999px rgba(0,0,0,.18)}
 .admin-qr-scan-msg{padding:12px 14px;text-align:center;font-size:13px;color:var(--ink2)}
+
+.dispatch-confirm-bg{position:fixed;inset:0;z-index:12000;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;padding:18px}
+.dispatch-confirm-modal{width:min(720px,96vw);max-height:92dvh;overflow:auto;background:#fff;border-radius:22px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.28);text-align:center}
+.dispatch-confirm-court{font-size:20px;font-weight:800;color:var(--ink3);margin-bottom:4px}.dispatch-confirm-label{font-size:16px;color:var(--ink3);margin-bottom:6px}.dispatch-confirm-code{font-size:18px;font-weight:800;color:var(--accent);margin-bottom:14px}
+.dispatch-confirm-matchup{display:grid;grid-template-columns:minmax(0,1fr) 54px minmax(0,1fr);align-items:center;gap:10px;padding:18px 8px}.dispatch-confirm-side{display:flex;flex-direction:column;gap:18px}.dispatch-confirm-person{min-width:0}.dispatch-confirm-name{font-size:clamp(24px,5vw,38px);font-weight:850;line-height:1.15;white-space:nowrap}.dispatch-confirm-club{font-size:clamp(14px,2.7vw,20px);color:var(--ink3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dispatch-confirm-vs{font-size:20px;font-weight:800;color:var(--ink3)}
+.dispatch-confirm-note{font-size:14px;color:var(--ink3);margin:8px 0 18px}.dispatch-confirm-actions{display:grid;grid-template-columns:1fr 2fr;gap:12px}.dispatch-confirm-actions button{min-height:58px;border-radius:14px;font-size:18px;font-weight:800}.dispatch-confirm-cancel{background:#fff;border:1px solid var(--line);color:var(--ink2)}.dispatch-confirm-ok{border:0;background:var(--accent);color:#fff}
+@media(max-width:520px){.dispatch-confirm-modal{padding:20px 14px}.dispatch-confirm-matchup{grid-template-columns:minmax(0,1fr) 34px minmax(0,1fr);gap:5px;padding:16px 0}.dispatch-confirm-name{font-size:clamp(20px,6vw,28px)}.dispatch-confirm-club{font-size:12px}.dispatch-confirm-actions button{min-height:56px;font-size:16px}}
 </style>
 </head>
 <body>
@@ -1497,7 +1504,7 @@ function mountSetup(){
 }
 
 /* ══ 手動配信：運営者がコールするタイミングで空きコートへ次試合を送る ══ */
-function dispatchNextToCourt(eventId,courtNo){
+function dispatchNextToCourt(eventId,courtNo,expectedMatchId){
   var ref=dbRef(eventId);
   return ref.transaction(function(cur){
     if(!cur)return cur;
@@ -1517,6 +1524,8 @@ function dispatchNextToCourt(eventId,courtNo){
     });
     var picked=null;
     for(var i=0;i<view.length;i++){
+      var candidateId=view[i]&&(view[i].id||view[i].matchCode||null);
+      if(expectedMatchId && candidateId!==expectedMatchId) continue;
       var names=toArray(view[i].teamA).concat(toArray(view[i].teamB));
       if(!names.some(function(n){return n&&playing[n];})){picked=view[i];break;}
     }
@@ -1585,6 +1594,71 @@ function setCourtActive(eventId,courtNo,active){
   });
 }
 
+/* ══ 配信前読み上げ確認 ══ */
+function showDispatchConfirm(eventId,courtNo,playerClubs,onDone){
+  dbRef(eventId).once('value').then(function(snap){
+    var cur=snap.val();
+    if(!cur){ alert('大会データを取得できませんでした'); return; }
+    var data=resolveBracketsIntoQueue(applyWithdrawals(applyPendingResults(cur)));
+    var courts=data.courts||{}, court=courts[String(courtNo)]||{status:'idle'};
+    if(court.status!=='idle' || court.match){ alert('このコートにはすでに試合が入っています'); return; }
+    var playing=playingTeamNames(courts);
+    var view=toArray(data.queue).slice().sort(function(a,b){
+      var ma=timeToMinutes(a.time),mb=timeToMinutes(b.time);
+      if(ma===null&&mb===null)return 0;if(ma===null)return 1;if(mb===null)return -1;return ma-mb;
+    });
+    var picked=null;
+    for(var i=0;i<view.length;i++){
+      var names=toArray(view[i].teamA).concat(toArray(view[i].teamB));
+      if(!names.some(function(n){return n&&playing[n];})){ picked=view[i]; break; }
+    }
+    if(!picked){ alert('現在配信できる試合がありません。ほかのコートで試合中の選手がいる可能性があります。'); return; }
+    var bg=el('div',{className:'dispatch-confirm-bg'});
+    var modal=el('div',{className:'dispatch-confirm-modal'});
+    modal.appendChild(el('div',{className:'dispatch-confirm-court'},'コート '+courtNo));
+    modal.appendChild(el('div',{className:'dispatch-confirm-label'},'次の試合を読み上げてください'));
+    if(picked.matchCode) modal.appendChild(el('div',{className:'dispatch-confirm-code'},picked.matchCode));
+    function side(team){
+      var box=el('div',{className:'dispatch-confirm-side'});
+      toArray(team).filter(Boolean).forEach(function(name){
+        var person=el('div',{className:'dispatch-confirm-person'});
+        person.appendChild(el('div',{className:'dispatch-confirm-name'},name));
+        var club=(playerClubs||data.playerClubs||{})[name]||'';
+        if(club) person.appendChild(el('div',{className:'dispatch-confirm-club'},club));
+        box.appendChild(person);
+      });
+      return box;
+    }
+    var matchup=el('div',{className:'dispatch-confirm-matchup'});
+    matchup.appendChild(side(picked.teamA));
+    matchup.appendChild(el('div',{className:'dispatch-confirm-vs'},'VS'));
+    matchup.appendChild(side(picked.teamB));
+    modal.appendChild(matchup);
+    modal.appendChild(el('div',{className:'dispatch-confirm-note'},'選手を呼び出したあと「確定して配信」を押してください'));
+    var actions=el('div',{className:'dispatch-confirm-actions'});
+    var cancel=el('button',{className:'dispatch-confirm-cancel'},'戻る');
+    var confirmBtn=el('button',{className:'dispatch-confirm-ok'},'確定して配信');
+    cancel.onclick=function(){ bg.remove(); };
+    confirmBtn.onclick=function(){
+      confirmBtn.disabled=true; cancel.disabled=true; confirmBtn.textContent='配信中…';
+      var expected=picked.id||picked.matchCode||null;
+      dispatchNextToCourt(eventId,courtNo,expected).then(function(){
+        return dbRef(eventId).child('courts/'+courtNo).once('value');
+      }).then(function(cs){
+        var c=cs.val(), actual=c&&c.match&&(c.match.id||c.match.matchCode||null);
+        if(!c || c.status!=='assigned' || (expected && actual!==expected)){
+          confirmBtn.disabled=false; cancel.disabled=false; confirmBtn.textContent='確定して配信';
+          alert('待機状況が変わったため配信できませんでした。もう一度確認してください。'); return;
+        }
+        bg.remove(); if(onDone) onDone();
+      }).catch(function(e){ console.error(e); confirmBtn.disabled=false; cancel.disabled=false; confirmBtn.textContent='確定して配信'; alert('配信に失敗しました'); });
+    };
+    actions.appendChild(cancel); actions.appendChild(confirmBtn); modal.appendChild(actions);
+    bg.appendChild(modal); bg.onclick=function(e){ if(e.target===bg) bg.remove(); };
+    document.body.appendChild(bg);
+  }).catch(function(e){ console.error(e); alert('配信候補の取得に失敗しました'); });
+}
+
 /* ══ コートカード描画 ══ */
 function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs,badoruBaseUrl){
   court=court||{status:'idle'};
@@ -1628,11 +1702,9 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs,bador
     if(isAdmin){
       var dispatchBtn=el('button',{className:'court-dispatch-btn',disabled:!hasQueue},hasQueue?'配信':'待機中');
       dispatchBtn.onclick=function(){
-        dispatchBtn.disabled=true; dispatchBtn.textContent='配信中…';
-        dispatchNextToCourt(eventId,courtNo).then(function(){
-          // DB更新時はvalue監視で再描画される。更新対象が無かった場合もボタンを復帰させる。
+        showDispatchConfirm(eventId,courtNo,playerClubs,function(){
           if(document.body.contains(dispatchBtn)){ dispatchBtn.disabled=false; dispatchBtn.textContent='配信'; }
-        }).catch(function(e){console.error(e); if(document.body.contains(dispatchBtn)){dispatchBtn.disabled=false;dispatchBtn.textContent='配信';} alert('配信に失敗しました');});
+        });
       };
       card.appendChild(dispatchBtn);
       var stopBtn=el('button',{className:'court-stop-btn'},'このコートの使用を終了');
