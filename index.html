@@ -130,7 +130,9 @@ input:focus,textarea:focus{outline:none}
 .court-code{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-top:4px}
 
 .queue-row{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--rule);background:white}
-.queue-idx{font-family:var(--mono);font-size:12px;color:var(--ink3);width:22px;flex-shrink:0}
+.queue-idx{font-family:var(--mono);font-size:12px;color:var(--ink3);min-width:58px;flex-shrink:0}
+.queue-star{border:none;background:transparent;font-size:21px;line-height:1;color:#c9c7c2;cursor:pointer;padding:2px 4px;flex-shrink:0}.queue-star.on{color:#f59e0b}.queue-diff{display:block;font-size:10px;margin-top:2px;text-align:right}.queue-diff.late{color:#c2410c}.queue-diff.early{color:#2a7d2a}.queue-diff.same{color:var(--ink3)}
+.queue-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-right:18px}.queue-filter{border:1px solid var(--rule);background:#fff;border-radius:999px;padding:6px 11px;font-size:11px;color:var(--ink2);cursor:pointer;white-space:nowrap}.queue-filter.on{background:#fff7dd;border-color:#f59e0b;color:#92400e}
 .queue-teams{font-size:14px;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .queue-time{font-family:var(--mono);font-size:12px;color:var(--ink3);flex-shrink:0}
 
@@ -2438,7 +2440,7 @@ function showHelpModal(){
       '<b>棄権</b>：棄権があった試合は、負けた側に赤字で「キ」と表示されます。試合前棄権は大会の得点ルールに応じたストレート勝ち、試合途中の棄権は実得点を残して残りを勝者側へ補完した公式スコアとして扱います。'
     ]),
     section('⑤「コート状況」タブ','',[
-      '<b>自分の試合を探す</b>：選手名の一部を入力すると、進行中／待ち順と予測時刻／結果、をまとめて確認できます。',
+      '<b>試合を探す</b>：選手名の一部または試合Noを入力すると、進行中／待ち順と予測時刻／結果、をまとめて確認できます。',
       '<b>キュー待ちの予測時刻</b>：正常終了の実績が19試合まではCSV記載の時間差を維持し、最新のassignedAt（大会Nowからコートへ配信した時刻）に合わせて全体を補正します。20試合そろった後は、直近20試合のassignedAtから終了までの平均所要時間を使い、コート別の空き時刻をシミュレーションして先の試合まで随時再予測します。'
     ]),
     section('⑥「棄権」タブ','',[
@@ -3022,11 +3024,12 @@ function searchPlayerMatches(data, query){
   if(!q) return [];
   var results = [];
   function nameMatches(arr){ return toArray(arr).some(function(n){ return n && n.indexOf(q) >= 0; }); }
+  function codeMatches(code){ return !!(code && String(code).toLowerCase().indexOf(q.toLowerCase()) >= 0); }
 
   // ① コートで進行中・配信済み
   Object.keys(data.courts||{}).forEach(function(cno){
     var c = data.courts[cno];
-    if(c && c.match && (nameMatches(c.match.teamA) || nameMatches(c.match.teamB))){
+    if(c && c.match && (nameMatches(c.match.teamA) || nameMatches(c.match.teamB) || codeMatches(c.match.matchCode))){
       var mine = nameMatches(c.match.teamA) ? 'A' : 'B';
       var opp = mine==='A' ? c.match.teamB : c.match.teamA;
       results.push({ status: c.status==='live'?'live':'assigned', courtNo:cno, opponent: teamLabel(opp), time: c.match.time||'', matchCode: c.match.matchCode });
@@ -3043,7 +3046,7 @@ function searchPlayerMatches(data, query){
   });
   var dynEstimates = estimateQueueStartTimes(data, queueSorted);
   queueSorted.forEach(function(m, idx){
-    if(nameMatches(m.teamA) || nameMatches(m.teamB)){
+    if(nameMatches(m.teamA) || nameMatches(m.teamB) || codeMatches(m.matchCode)){
       var mine = nameMatches(m.teamA) ? 'A' : 'B';
       var opp = mine==='A' ? m.teamB : m.teamA;
       var timeLabel = dynEstimates && dynEstimates[m.id] ? fmtHHMM(dynEstimates[m.id])+'頃' : (m.time||'');
@@ -3057,7 +3060,7 @@ function searchPlayerMatches(data, query){
     toArray(lg.matches).forEach(function(m){
       if(!m.result) return;
       var a = lg.participants[m.i]||[], b = lg.participants[m.j]||[];
-      if(nameMatches(a) || nameMatches(b)){
+      if(nameMatches(a) || nameMatches(b) || codeMatches(lg.name+'-'+(m.id+1))){
         var mine = nameMatches(a) ? 'A' : 'B';
         var opp = mine==='A' ? b : a;
         var won = (mine==='A' && m.result.winner==='A') || (mine==='B' && m.result.winner==='B');
@@ -3073,7 +3076,7 @@ function searchPlayerMatches(data, query){
     var br = data.brackets[bid];
     toArray(br.matches).forEach(function(m){
       if(!m.result || !m.teamA || !m.teamB) return;
-      if(nameMatches(m.teamA) || nameMatches(m.teamB)){
+      if(nameMatches(m.teamA) || nameMatches(m.teamB) || codeMatches(br.name+'-'+m.id)){
         var mine = nameMatches(m.teamA) ? 'A' : 'B';
         var opp = mine==='A' ? m.teamB : m.teamA;
         var won = (mine==='A' && m.result.winner==='A') || (mine==='B' && m.result.winner==='B');
@@ -3092,9 +3095,10 @@ function searchPlayerMatches(data, query){
 
 function buildPlayerSearch(data){
   var wrap = el('div',{className:'settings-section',style:{marginTop:'8px'}});
-  wrap.appendChild(el('div',{className:'settings-section-title'},'自分の試合を探す'));
+  wrap.appendChild(el('div',{className:'settings-section-title'},'試合を探す'));
   var box = el('div',{className:'settings-list',style:{padding:'12px 16px'}});
-  var inp = el('input',{className:'settings-inp',placeholder:'選手名の一部を入力（例: 山田）'});
+  var inp = el('input',{id:'playerMatchSearch',className:'settings-inp',placeholder:'選手名の一部もしくは試合Noを入力'});
+  inp.value=playerSearchQuery;
   var resultsWrap = el('div',{style:{marginTop:'10px'}});
 
   function renderResults(){
@@ -3110,18 +3114,19 @@ function buildPlayerSearch(data){
     matches.forEach(function(m){
       var line;
       if(m.status==='live'){
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge live'},'進行中'), 'コート'+m.courtNo+'　vs '+m.opponent]);
+        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge live'},'進行中'), (m.matchCode?m.matchCode+'　':'')+'コート'+m.courtNo+'　vs '+m.opponent]);
       }else if(m.status==='assigned'){
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge live'},'開始待ち'), 'コート'+m.courtNo+'　vs '+m.opponent]);
+        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge live'},'開始待ち'), (m.matchCode?m.matchCode+'　':'')+'コート'+m.courtNo+'　vs '+m.opponent]);
       }else if(m.status==='queued'){
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge queued'},'待ち'+m.position+'番目'), (m.time?m.time+'頃　':'')+'vs '+m.opponent]);
+        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge queued'},'待機中'), (m.matchCode?m.matchCode+'　':'')+(m.time?m.time+'　':'')+'vs '+m.opponent]);
       }else{
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge done'},'結果'), m.resultLabel+'　vs '+m.opponent]);
+        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge done'},'結果'), (m.matchCode?m.matchCode+'　':'')+m.resultLabel+'　vs '+m.opponent]);
       }
       resultsWrap.appendChild(line);
     });
   }
-  inp.oninput = renderResults;
+  inp.oninput = function(){ playerSearchQuery=inp.value; renderResults(); };
+  if(playerSearchQuery) renderResults();
   box.appendChild(inp);
   box.appendChild(resultsWrap);
   wrap.appendChild(box);
@@ -3129,6 +3134,28 @@ function buildPlayerSearch(data){
 }
 
 var progressRefreshTimer=null;
+var playerSearchQuery='';
+var queueFeaturedOnly=false;
+
+function toggleQueueFeatured(eventId, matchId){
+  dbRef(eventId).child('queue').transaction(function(q){
+    if(!q) return q;
+    var arr=toArray(q);
+    for(var i=0;i<arr.length;i++){
+      if(arr[i] && arr[i].id===matchId){ arr[i]=Object.assign({},arr[i],{isFeatured:!arr[i].isFeatured}); break; }
+    }
+    return arr;
+  });
+}
+
+function predictionDiffLabel(initialTime, latestTs){
+  if(!initialTime || !latestTs) return null;
+  var base=scheduledTsToday(initialTime, latestTs);
+  if(base===null) return null;
+  var min=Math.round((latestTs-base)/60000);
+  if(min===0) return {text:'初回予測 ±0分',cls:'same'};
+  return {text:'初回予測 '+(min>0?'+':'')+min+'分',cls:min>0?'late':'early'};
+}
 
 function mountProgress(eventId,data,role){
   var isAdmin=role==='admin';
@@ -3200,24 +3227,45 @@ function mountProgress(eventId,data,role){
   });
   var dynamicEstimates = estimateQueueStartTimes(data, queueSorted);
   var queueLabel = dynamicEstimates ? 'キュー待ち（残り'+queue.length+'件・実績ペースによる予測）' : 'キュー待ち（残り'+queue.length+'件・予測時刻の早い順）';
-  root.appendChild(el('div',{className:'section-label'},queueLabel));
+  var qHead=el('div',{className:'queue-head'});
+  qHead.appendChild(el('div',{className:'section-label'},queueLabel));
+  var featureBtn=el('button',{className:'queue-filter'+(queueFeaturedOnly?' on':'')},queueFeaturedOnly?'★ 全て表示':'☆ 注目のみ表示');
+  featureBtn.onclick=function(){ queueFeaturedOnly=!queueFeaturedOnly; mountProgress(eventId,data,role); };
+  qHead.appendChild(featureBtn);
+  root.appendChild(qHead);
   var queueWrap=el('div');
-  queueSorted.forEach(function(m,idx){
-    var timeLabel = dynamicEstimates && dynamicEstimates[m.id] ? fmtHHMM(dynamicEstimates[m.id])+'頃' : (m.time||'');
+  var visibleQueue=queueFeaturedOnly?queueSorted.filter(function(m){return !!m.isFeatured;}):queueSorted;
+  visibleQueue.forEach(function(m){
+    var latestTs = dynamicEstimates && dynamicEstimates[m.id] ? dynamicEstimates[m.id] : null;
+    var timeLabel = latestTs ? fmtHHMM(latestTs)+'頃' : (m.time||'');
+    var diff=predictionDiffLabel(m.time,latestTs);
+    var timeBox=el('span',{className:'queue-time'},timeLabel);
+    if(diff) timeBox.appendChild(el('span',{className:'queue-diff '+diff.cls},diff.text));
+    var star=el('button',{className:'queue-star'+(m.isFeatured?' on':''),title:m.isFeatured?'注目を解除':'注目に登録'},m.isFeatured?'★':'☆');
+    star.onclick=function(){ toggleQueueFeatured(eventId,m.id); };
     queueWrap.appendChild(el('div',{className:'queue-row'},[
-      el('span',{className:'queue-idx'},String(idx+1)),
+      star,
+      el('span',{className:'queue-idx'},m.matchCode||'—'),
       el('span',{className:'queue-teams'},teamLabel(m.teamA)+' vs '+teamLabel(m.teamB)),
-      el('span',{className:'queue-time'},timeLabel)
+      timeBox
     ]));
   });
   if(queue.length===0){
     queueWrap.appendChild(el('div',{style:{padding:'12px 18px',color:'var(--ink3)',fontSize:13}},'キューは空です'));
+  }else if(queueFeaturedOnly && visibleQueue.length===0){
+    queueWrap.appendChild(el('div',{style:{padding:'12px 18px',color:'var(--ink3)',fontSize:13}},'注目試合はありません'));
   }
   root.appendChild(queueWrap);
 
+  var searchWasFocused=document.activeElement && document.activeElement.id==='playerMatchSearch';
+  var searchSelStart=searchWasFocused?document.activeElement.selectionStart:null;
   render(root);
+  if(searchWasFocused){ var restored=document.getElementById('playerMatchSearch'); if(restored){ restored.focus(); try{restored.setSelectionRange(searchSelStart,searchSelStart);}catch(e){} } }
   if(progressRefreshTimer) clearTimeout(progressRefreshTimer);
-  progressRefreshTimer=setTimeout(function(){ mountProgress(eventId,data,role); },1000);
+  progressRefreshTimer=setTimeout(function tick(){
+    if(document.activeElement && document.activeElement.id==='playerMatchSearch'){ progressRefreshTimer=setTimeout(tick,1000); return; }
+    mountProgress(eventId,data,role);
+  },1000);
 }
 
 /* ══ 起動 ══ */
