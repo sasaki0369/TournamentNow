@@ -1395,7 +1395,7 @@ function mountSetup(){
   var card1=el('div',{className:'card'},[nameLabel,nameInp]);
 
   var courtLabel=el('div',{className:'field-label'},'コート数');
-  var courtInp=el('input',{className:'field-inp',type:'number',value:'12',min:'1',max:'40'});
+  var courtInp=el('input',{className:'field-inp',type:'number',value:'',min:'1',max:'40',placeholder:'CSV読込時は初回同時試合数から自動入力'});
   var card2=el('div',{className:'card'},[courtLabel,courtInp]);
 
   var venueLabel=el('div',{className:'field-label'},'会場（任意・バドるのスコアシートに反映されます）');
@@ -1418,7 +1418,6 @@ function mountSetup(){
   sampleCsvBtn.onclick=function(){
     // 8コート想定サンプル：男女シングルス／ダブルス各8チーム、各種目2リーグ×4チーム総当たり→各リーグ上位2組で決勝トーナメント。
     // 先頭8試合は8リーグから1試合ずつ選び、同一選手が重複しない構成で09:30開始。9試合目は09:50、以降は3分刻み。
-    courtInp.value='8';
     var sample=[
       "時刻,試合コード,種目,選手A1,選手A2,選手B1,選手B2,ラウンド,選手A1所属,選手A2所属,選手B1所属,選手B2所属,選手A1ふりがな,選手A2ふりがな,選手B1ふりがな,選手B2ふりがな",
       "09:30,MS-A-1,男子シングルス,青木大輝,,石井悠斗,,1,町田BC,,ひまわり,,あおきだいき,,いしいゆうと,",
@@ -1501,10 +1500,23 @@ function mountSetup(){
       parsedQueue = parsed.queue;
       parsedBrackets = parsed.brackets;
       parsedPlayerClubs = buildPlayerClubsFromRows(csvParseRows(text));
-      parsedPlayerReadings = buildPlayerReadingsFromRows(csvParseRows(text));
+      var csvRows = csvParseRows(text);
+      parsedPlayerReadings = buildPlayerReadingsFromRows(csvRows);
+      // CSV先頭から同じ開始時刻が連続する試合数を、初回同時使用コート数として自動入力する。
+      // 例: 09:30 が先頭から8行続き、次が09:50なら8コート。
+      var inferredCourtCount = 0;
+      if(csvRows.length && String(csvRows[0].time||'').trim()){
+        var firstTime=String(csvRows[0].time||'').trim();
+        for(var ci=0;ci<csvRows.length;ci++){
+          if(String(csvRows[ci].time||'').trim()!==firstTime) break;
+          inferredCourtCount++;
+        }
+      }
+      courtInp.value = inferredCourtCount>0 ? String(inferredCourtCount) : '';
       var bracketCount = Object.keys(parsedBrackets).length;
       csvPreview.textContent = parsedQueue.length+'件の試合'
         + (bracketCount>0 ? '、'+bracketCount+'件の決勝トーナメントを読み込みました' : 'を読み込みました')
+        + (inferredCourtCount>0 ? '／先頭の同時開始 '+inferredCourtCount+'試合からコート数を'+inferredCourtCount+'に設定しました' : '')
         + '（先頭: '+(parsedQueue[0]?parsedQueue[0].matchCode+' '+teamLabel(parsedQueue[0].teamA)+' vs '+teamLabel(parsedQueue[0].teamB):'-')+'）';
     });
   };
