@@ -2420,11 +2420,20 @@ function buildTournamentView(eventId, data, isAdmin){
     return hay.indexOf(q)>=0;
   }
   function applyLeagueFilter(){
-    if(!leagueList) return;
-    Array.prototype.forEach.call(leagueList.querySelectorAll('.league-card'),function(card){
-      var lid=card.getAttribute('data-league-id'), lg=leagues[lid];
-      card.style.display=(lg && leagueMatchesSearch(lg))?'':'none';
-    });
+    if(leagueList){
+      Array.prototype.forEach.call(leagueList.querySelectorAll('.league-card'),function(card){
+        var lid=card.getAttribute('data-league-id'), lg=leagues[lid];
+        card.style.display=(lg && leagueMatchesSearch(lg))?'':'none';
+      });
+    }
+    // トーナメントのみの大会でも、検索語に該当する選手が関わるトーナメントだけを表示する。
+    if(tournamentList){
+      Array.prototype.forEach.call(tournamentList.querySelectorAll('.tournament-search-item'),function(card){
+        var hay=(card.getAttribute('data-search-text')||'').toLowerCase();
+        var q=(leagueSearchText||'').trim().toLowerCase();
+        card.style.display=(!q || hay.indexOf(q)>=0)?'':'none';
+      });
+    }
   }
   leagueSearchWrap.appendChild(leagueSearch); wrap.appendChild(leagueSearchWrap);
   if(isAdmin){
@@ -2492,9 +2501,22 @@ function buildTournamentView(eventId, data, isAdmin){
   }
   // CSV上で試合ごとに別ブラケットとして登録されていても、試合コードの種目単位で統合して
   // 1回戦から決勝までを一つの勝ち上がり表として表示する。
+  var tournamentList=el('div',{className:'tournament-search-list'});
   buildTournamentDisplayGroups(brackets).forEach(function(br){
-    wrap.appendChild(buildBracketCard(data, br));
+    var card=buildBracketCard(data, br);
+    card.classList.add('tournament-search-item');
+    var searchParts=[br.name||''];
+    toArray(br.matches).forEach(function(m){
+      searchParts.push(m.matchCode||'');
+      toArray(m.teamA).concat(toArray(m.teamB)).forEach(function(n){if(n)searchParts.push(n);});
+      var ra=resolveSlotRef(data,m.slotA), rb=resolveSlotRef(data,m.slotB);
+      toArray(ra).concat(toArray(rb)).forEach(function(n){if(n)searchParts.push(n);});
+    });
+    card.setAttribute('data-search-text',searchParts.join(' '));
+    tournamentList.appendChild(card);
   });
+  wrap.appendChild(tournamentList);
+  applyLeagueFilter();
 
   return wrap;
 }
@@ -3418,6 +3440,35 @@ function mountProgress(eventId,data,role){
       grid.appendChild(buildCourtCard(i,(data.courts||{})[String(i)],eventId,isAdmin,toArray(data.queue).length>0,data.playerClubs||{}));
     }
     root.appendChild(grid);
+  }
+
+  // 検索中はコート状況のカードを隠し、コートに配信済み／進行中の該当試合も検索結果として表示する。
+  var searchedCourts=[];
+  if(searchQuery){
+    Object.keys(data.courts||{}).forEach(function(cno){
+      var c=(data.courts||{})[cno];
+      if(c && c.match && (c.status==='assigned' || c.status==='live') && queueMatchSearch(c.match,searchQuery)){
+        searchedCourts.push({courtNo:cno,court:c,match:c.match});
+      }
+    });
+    if(searchedCourts.length){
+      root.appendChild(el('div',{className:'section-label'},'コート状況（検索結果 '+searchedCourts.length+'件）'));
+      var courtSearchWrap=el('div');
+      searchedCourts.forEach(function(x){
+        var m=x.match, featureKey=(m.id!==undefined&&m.id!==null)?m.id:(m.matchCode||('court-'+x.courtNo));
+        var featured=isQueueFeatured(eventId,featureKey);
+        var star=el('button',{className:'queue-star'+(featured?' on':''),title:featured?'注目を解除':'注目に登録'},featured?'★':'☆');
+        star.onclick=function(){ toggleQueueFeatured(eventId,featureKey); mountProgress(eventId,data,role); };
+        var state=x.court.status==='live'?'進行中':'配信済み';
+        courtSearchWrap.appendChild(el('div',{className:'queue-row'},[
+          star,
+          el('span',{className:'queue-idx'},m.matchCode||'—'),
+          el('span',{className:'queue-teams'},teamLabel(m.teamA)+' vs '+teamLabel(m.teamB)),
+          el('span',{className:'queue-time'},'コート '+x.courtNo+'・'+state)
+        ]));
+      });
+      root.appendChild(courtSearchWrap);
+    }
   }
 
   var queue=toArray(data.queue);
