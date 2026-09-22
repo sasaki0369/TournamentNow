@@ -1477,7 +1477,13 @@ function dispatchNextToCourt(eventId,courtNo){
     var courts=Object.assign({},data.courts||{});
     var key=String(courtNo);
     var court=courts[key]||{status:'idle',match:null,live:null,lastResult:null};
-    if(court.status!=='idle' || court.match)return data;
+    // idle に戻ったコートに古い match/live が残っていても配信を止めない。
+    // 表示上は「空き」なのに transaction だけが stale match を見て拒否するケースを防ぐ。
+    if(court.status!=='idle')return data;
+    if(court.match || court.live){
+      court=Object.assign({},court,{match:null,live:null,startedAt:null});
+      courts[key]=court;
+    }
     var queue=toArray(data.queue).slice();
     if(!queue.length)return data;
     var playing=playingTeamNames(courts);
@@ -1492,7 +1498,14 @@ function dispatchNextToCourt(eventId,courtNo){
       if(!names.some(function(n){return n&&playing[n];})){picked=view[i];break;}
     }
     if(!picked)return data;
-    var idx=queue.findIndex(function(q){return q.id===picked.id;});
+    // id が無いCSV由来試合同士を undefined===undefined で誤一致させない。
+    var idx=-1;
+    if(picked.id!==undefined && picked.id!==null && picked.id!==''){
+      idx=queue.findIndex(function(q){return q && q.id===picked.id;});
+    }
+    if(idx<0 && picked.matchCode){
+      idx=queue.findIndex(function(q){return q && q.matchCode===picked.matchCode && q.refType===picked.refType && q.refId===picked.refId && q.refMatchIndex===picked.refMatchIndex;});
+    }
     if(idx<0)idx=queue.indexOf(picked);
     if(idx<0)return data;
     queue.splice(idx,1);
