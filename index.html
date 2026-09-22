@@ -123,7 +123,7 @@ input:focus,textarea:focus{outline:none}
 .court-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
 .court-dot.live{animation:pulse 1.4s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.court-teams{display:grid;grid-template-columns:minmax(0,1fr) 34px minmax(0,1fr);align-items:center;gap:6px;color:var(--ink);margin:3px 0 2px}
+.court-teams{display:grid;grid-template-columns:minmax(0,1fr) 34px minmax(0,1fr);align-items:stretch;gap:6px;color:var(--ink);margin:3px 0 2px}.court-team{align-self:stretch}
 .court-team{min-width:0;display:flex;flex-direction:column;justify-content:center;gap:8px;text-align:center}
 .court-person{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
 .court-player-name{display:block;width:100%;font-size:15px;font-weight:750;line-height:1.22;white-space:nowrap;letter-spacing:-.02em}
@@ -264,7 +264,7 @@ input:focus,textarea:focus{outline:none}
 .dispatch-confirm-bg{position:fixed;inset:0;z-index:12000;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;padding:18px}
 .dispatch-confirm-modal{width:min(720px,96vw);max-height:92dvh;overflow:auto;background:#fff;border-radius:22px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.28);text-align:center}
 .dispatch-confirm-court{font-size:20px;font-weight:800;color:var(--ink3);margin-bottom:4px}.dispatch-confirm-label{font-size:16px;color:var(--ink3);margin-bottom:6px}.dispatch-confirm-code{font-size:18px;font-weight:800;color:var(--accent);margin-bottom:14px}
-.dispatch-confirm-matchup{display:grid;grid-template-columns:minmax(0,1fr) 54px minmax(0,1fr);align-items:center;gap:10px;padding:18px 8px}.dispatch-confirm-side{display:flex;flex-direction:column;gap:18px}.dispatch-confirm-person{min-width:0}.dispatch-confirm-name{font-size:clamp(24px,5vw,38px);font-weight:850;line-height:1.15;white-space:nowrap}.dispatch-confirm-club{font-size:clamp(14px,2.7vw,20px);color:var(--ink3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dispatch-confirm-vs{font-size:20px;font-weight:800;color:var(--ink3)}
+.dispatch-confirm-matchup{display:grid;grid-template-columns:minmax(0,1fr) 54px minmax(0,1fr);align-items:center;gap:10px;padding:18px 8px}.dispatch-confirm-side{display:flex;flex-direction:column;gap:18px}.dispatch-confirm-person{min-width:0}.dispatch-confirm-reading{font-size:clamp(11px,2.1vw,15px);font-weight:650;line-height:1.1;color:var(--ink3);margin-bottom:3px;white-space:nowrap}.dispatch-confirm-name{font-size:clamp(24px,5vw,38px);font-weight:850;line-height:1.15;white-space:nowrap}.dispatch-confirm-club{font-size:clamp(14px,2.7vw,20px);color:var(--ink3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dispatch-confirm-vs{font-size:20px;font-weight:800;color:var(--ink3)}
 .dispatch-confirm-note{font-size:14px;color:var(--ink3);margin:8px 0 18px}.dispatch-confirm-actions{display:grid;grid-template-columns:1fr 2fr;gap:12px}.dispatch-confirm-actions button{min-height:58px;border-radius:14px;font-size:18px;font-weight:800}.dispatch-confirm-cancel{background:#fff;border:1px solid var(--line);color:var(--ink2)}.dispatch-confirm-ok{border:0;background:var(--accent);color:#fff}
 @media(max-width:520px){.dispatch-confirm-modal{padding:20px 14px}.dispatch-confirm-matchup{grid-template-columns:minmax(0,1fr) 34px minmax(0,1fr);gap:5px;padding:16px 0}.dispatch-confirm-name{font-size:clamp(20px,6vw,28px)}.dispatch-confirm-club{font-size:12px}.dispatch-confirm-actions button{min-height:56px;font-size:16px}}
 </style>
@@ -336,7 +336,9 @@ function csvParseRows(text){
       type:(cols[2]||'').indexOf('ダブル')>=0?'doubles':'singles',
       a1:cols[3]||'', a2:cols[4]||'', b1:cols[5]||'', b2:cols[6]||'',
       round: parseInt(cols[7],10)||1,
-      a1Club:cols[8]||'', a2Club:cols[9]||'', b1Club:cols[10]||'', b2Club:cols[11]||''
+      a1Club:cols[8]||'', a2Club:cols[9]||'', b1Club:cols[10]||'', b2Club:cols[11]||'',
+      // 任意列: teamA1_kana,teamA2_kana,teamB1_kana,teamB2_kana（ふりがな）
+      a1Reading:cols[12]||'', a2Reading:cols[13]||'', b1Reading:cols[14]||'', b2Reading:cols[15]||''
     };
   }).filter(function(r){ return r.code || r.a1 || r.b1; });
 }
@@ -1325,6 +1327,16 @@ function buildPlayerClubsFromRows(rows){
   });
   return map;
 }
+function buildPlayerReadingsFromRows(rows){
+  var map={};
+  (rows||[]).forEach(function(r){
+    [[r.a1,r.a1Reading],[r.a2,r.a2Reading],[r.b1,r.b1Reading],[r.b2,r.b2Reading]].forEach(function(x){
+      var n=(x[0]||'').trim(), y=(x[1]||'').trim();
+      if(n && n.charAt(0)!=='#' && y) map[n]=y;
+    });
+  });
+  return map;
+}
 function playerLabelWithClub(name, clubs){
   if(!name)return '';
   var club=clubs&&clubs[name];
@@ -1402,7 +1414,7 @@ function mountSetup(){
     el('div',{},'これらを含む試合コードのグループは、自動的に「決勝トーナメント」として登録され、対戦相手が確定次第キューに入ります。')
   ]);
   var csvPreview=el('div',{style:{marginTop:'10px',fontSize:'13px',color:'var(--ink2)'}});
-  var parsedQueue=[]; var parsedBrackets={}; var parsedPlayerClubs={};
+  var parsedQueue=[]; var parsedBrackets={}; var parsedPlayerClubs={}; var parsedPlayerReadings={};
   csvFile.onchange=function(){
     var f=csvFile.files[0];
     if(!f)return;
@@ -1414,6 +1426,7 @@ function mountSetup(){
       parsedQueue = parsed.queue;
       parsedBrackets = parsed.brackets;
       parsedPlayerClubs = buildPlayerClubsFromRows(csvParseRows(text));
+      parsedPlayerReadings = buildPlayerReadingsFromRows(csvParseRows(text));
       var bracketCount = Object.keys(parsedBrackets).length;
       csvPreview.textContent = parsedQueue.length+'件の試合'
         + (bracketCount>0 ? '、'+bracketCount+'件の決勝トーナメントを読み込みました' : 'を読み込みました')
@@ -1447,7 +1460,8 @@ function mountSetup(){
       queue:parsedQueue,
       courts:{},
       brackets:parsedBrackets,
-      playerClubs:parsedPlayerClubs
+      playerClubs:parsedPlayerClubs,
+      playerReadings:parsedPlayerReadings
     };
     dbRef(eventId).set(initial,function(err){
       if(err){errEl.textContent='作成に失敗しました: '+err.message;return;}
@@ -1622,6 +1636,8 @@ function showDispatchConfirm(eventId,courtNo,playerClubs,onDone){
       var box=el('div',{className:'dispatch-confirm-side'});
       toArray(team).filter(Boolean).forEach(function(name){
         var person=el('div',{className:'dispatch-confirm-person'});
+        var reading=(data.playerReadings||{})[name]||'';
+        if(reading) person.appendChild(el('div',{className:'dispatch-confirm-reading'},reading));
         person.appendChild(el('div',{className:'dispatch-confirm-name'},name));
         var club=(playerClubs||data.playerClubs||{})[name]||'';
         if(club) person.appendChild(el('div',{className:'dispatch-confirm-club'},club));
@@ -1869,7 +1885,7 @@ extraStyle.textContent = [
   '.court-teams{overflow-wrap:normal;word-break:normal}',
   '.court-player{display:inline-block;white-space:nowrap;word-break:keep-all;overflow-wrap:normal;max-width:100%;vertical-align:baseline}',
   '.court-player-sep{display:inline-block;white-space:pre}',
-  '.court-vs{display:inline-block;white-space:nowrap}',
+  '.court-vs{display:flex;align-items:center;justify-content:center;align-self:stretch;height:auto;white-space:nowrap}',
   '.court-score{white-space:nowrap}',
   '.award-player{overflow-wrap:anywhere}',
   '.tournament-team>span:first-child{min-width:0;overflow-wrap:anywhere}',
