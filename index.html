@@ -1557,6 +1557,7 @@ function mountSetup(){
          リーグ登録後に設定タブへ進めるため、CSV読み込み直後の作業順が明確になる。 */
       var leagueDetection = autoDetectLeaguesFromQueue(initial);
       activeTab = leagueDetection.candidateGroups.length > 0 ? 'tournament' : 'courts';
+      scrollTournamentTopOnce = activeTab === 'tournament';
       location.hash='admin:'+eventId;
       startAdmin(eventId);
     });
@@ -1986,6 +1987,7 @@ extraStyle.textContent = [
 document.head.appendChild(extraStyle);
 
 var activeTab = 'courts'; // 'courts' | 'tournament'
+var scrollTournamentTopOnce = false; // 大会作成直後のリーグ・トーナメント初回表示を必ず最上部にする
 var leagueSearchText = ''; // リーグ・トーナメントタブのリーグ絞り込み（端末内の表示状態）
 
 function closeDetailModal(bg){ if(bg && bg.parentNode) bg.parentNode.removeChild(bg); }
@@ -3800,6 +3802,15 @@ function mountProgress(eventId,data,role){
   if(activeTab==='tournament'){
     root.appendChild(buildTournamentView(eventId, data, isAdmin));
     render(root);
+    if(scrollTournamentTopOnce){
+      scrollTournamentTopOnce=false;
+      requestAnimationFrame(function(){
+        window.scrollTo({top:0,left:0,behavior:'auto'});
+        if(document.scrollingElement) document.scrollingElement.scrollTop=0;
+        document.documentElement.scrollTop=0;
+        document.body.scrollTop=0;
+      });
+    }
     return;
   }
 
