@@ -123,8 +123,14 @@ input:focus,textarea:focus{outline:none}
 .court-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
 .court-dot.live{animation:pulse 1.4s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.court-teams{font-size:16px;font-weight:700;color:var(--ink);line-height:1.5}
-.court-vs{color:var(--ink3);font-weight:400;font-size:13px;margin:0 4px}
+.court-teams{display:grid;grid-template-columns:minmax(0,1fr) 34px minmax(0,1fr);align-items:center;gap:6px;color:var(--ink);margin:3px 0 2px}
+.court-team{min-width:0;display:flex;flex-direction:column;justify-content:center;gap:8px;text-align:center}
+.court-person{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
+.court-player-name{display:block;width:100%;font-size:15px;font-weight:750;line-height:1.22;white-space:nowrap;letter-spacing:-.02em}
+.court-player-club{display:block;width:100%;font-size:10.5px;font-weight:500;line-height:1.2;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.court-player-name.fit-small{font-size:13px}
+.court-vs{display:flex;align-items:center;justify-content:center;color:var(--ink3);font-weight:700;font-size:11px;letter-spacing:.04em;align-self:stretch}
+@media(max-width:420px){.court-player-name{font-size:14px}.court-player-name.fit-small{font-size:12px}.court-player-club{font-size:10px}.court-teams{grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr);gap:4px}}
 .court-score{font-family:var(--mono);font-size:26px;font-weight:500;color:var(--ink);margin-top:6px;letter-spacing:-.02em}
 .court-gamewins{font-family:var(--mono);font-size:12px;color:var(--ink3);margin-top:2px}
 .court-idle-msg{color:var(--ink3);font-size:14px;padding:8px 0}
@@ -1639,20 +1645,27 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs,bador
     }
   }else{
     var m=court.match;
-    function courtTeamNodes(team){
+    function buildCourtTeam(team){
+      var box=el('div',{className:'court-team'});
       var names=(team||[]).filter(Boolean);
-      if(!names.length) return [el('span',{className:'court-player'},'（未定）')];
-      var nodes=[];
-      names.forEach(function(name,idx){
-        if(idx) nodes.push(el('span',{className:'court-player-sep'},' / '));
-        nodes.push(el('span',{className:'court-player'},playerLabelWithClub(name,playerClubs||{})));
+      if(!names.length){
+        box.appendChild(el('div',{className:'court-person'},[el('span',{className:'court-player-name'},'未定')]));
+        return box;
+      }
+      names.forEach(function(name){
+        var club=(playerClubs||{})[name]||'';
+        var nameClass='court-player-name'+(String(name).length>=8?' fit-small':'');
+        var person=el('div',{className:'court-person'});
+        person.appendChild(el('span',{className:nameClass,title:name},name));
+        if(club) person.appendChild(el('span',{className:'court-player-club',title:club},club));
+        box.appendChild(person);
       });
-      return nodes;
+      return box;
     }
     var courtTeams=el('div',{className:'court-teams'});
-    courtTeamNodes(m.teamA).forEach(function(n){courtTeams.appendChild(n);});
-    courtTeams.appendChild(el('span',{className:'court-vs'},'vs'));
-    courtTeamNodes(m.teamB).forEach(function(n){courtTeams.appendChild(n);});
+    courtTeams.appendChild(buildCourtTeam(m.teamA));
+    courtTeams.appendChild(el('div',{className:'court-vs'},'VS'));
+    courtTeams.appendChild(buildCourtTeam(m.teamB));
     card.appendChild(courtTeams);
     if(m.matchCode)card.appendChild(el('div',{className:'court-code'},m.matchCode));
     if(isAdmin && court.status==='assigned'){
