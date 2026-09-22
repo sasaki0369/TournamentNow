@@ -3114,11 +3114,12 @@ function searchPlayerMatches(data, query){
   if(!q) return [];
   var results = [];
   function nameMatches(arr){ return toArray(arr).some(function(n){ return n && n.indexOf(q) >= 0; }); }
+  function codeMatches(code){ return code && String(code).toLowerCase().indexOf(q.toLowerCase()) >= 0; }
 
   // ① コートで進行中・配信済み
   Object.keys(data.courts||{}).forEach(function(cno){
     var c = data.courts[cno];
-    if(c && c.match && (nameMatches(c.match.teamA) || nameMatches(c.match.teamB))){
+    if(c && c.match && (nameMatches(c.match.teamA) || nameMatches(c.match.teamB) || codeMatches(c.match.matchCode))){
       var mine = nameMatches(c.match.teamA) ? 'A' : 'B';
       var opp = mine==='A' ? c.match.teamB : c.match.teamA;
       results.push({ status: c.status==='live'?'live':'assigned', courtNo:cno, opponent: teamLabel(opp), time: c.match.time||'', matchCode: c.match.matchCode });
@@ -3135,7 +3136,7 @@ function searchPlayerMatches(data, query){
   });
   var dynEstimates = estimateQueueStartTimes(data, queueSorted);
   queueSorted.forEach(function(m, idx){
-    if(nameMatches(m.teamA) || nameMatches(m.teamB)){
+    if(nameMatches(m.teamA) || nameMatches(m.teamB) || codeMatches(m.matchCode)){
       var mine = nameMatches(m.teamA) ? 'A' : 'B';
       var opp = mine==='A' ? m.teamB : m.teamA;
       var timeLabel = dynEstimates && dynEstimates[m.id] ? fmtHHMM(dynEstimates[m.id])+'頃' : (m.time||'');
@@ -3149,13 +3150,13 @@ function searchPlayerMatches(data, query){
     toArray(lg.matches).forEach(function(m){
       if(!m.result) return;
       var a = lg.participants[m.i]||[], b = lg.participants[m.j]||[];
-      if(nameMatches(a) || nameMatches(b)){
+      if(nameMatches(a) || nameMatches(b) || codeMatches(m.matchCode || (lg.name+'-'+(m.id+1)))){
         var mine = nameMatches(a) ? 'A' : 'B';
         var opp = mine==='A' ? b : a;
         var won = (mine==='A' && m.result.winner==='A') || (mine==='B' && m.result.winner==='B');
         results.push({ status:'done', opponent: teamLabel(opp),
           resultLabel: m.result.voided ? '順位計算除外' : (m.result.retired ? (won?'棄権勝ち':'棄権負け') : ((won?'○ 勝ち':'× 負け')+'　'+m.result.gameWinsA+'-'+m.result.gameWinsB)),
-          matchCode: lg.name+'-'+(m.id+1) });
+          matchCode: m.matchCode || (lg.name+'-'+(m.id+1)) });
       }
     });
   });
@@ -3165,13 +3166,13 @@ function searchPlayerMatches(data, query){
     var br = data.brackets[bid];
     toArray(br.matches).forEach(function(m){
       if(!m.result || !m.teamA || !m.teamB) return;
-      if(nameMatches(m.teamA) || nameMatches(m.teamB)){
+      if(nameMatches(m.teamA) || nameMatches(m.teamB) || codeMatches(m.matchCode || (br.name+'-'+m.id))){
         var mine = nameMatches(m.teamA) ? 'A' : 'B';
         var opp = mine==='A' ? m.teamB : m.teamA;
         var won = (mine==='A' && m.result.winner==='A') || (mine==='B' && m.result.winner==='B');
         results.push({ status:'done', opponent: teamLabel(opp),
           resultLabel: m.result.voided ? '順位計算除外' : (m.result.retired ? (won?'棄権勝ち':'棄権負け') : ((won?'○ 勝ち':'× 負け')+'　'+m.result.gameWinsA+'-'+m.result.gameWinsB)),
-          matchCode: br.name+'-'+m.id });
+          matchCode: m.matchCode || (br.name+'-'+m.id) });
       }
     });
   });
@@ -3182,45 +3183,70 @@ function searchPlayerMatches(data, query){
   return results;
 }
 
-function buildPlayerSearch(data){
+function buildPlayerSearch(eventId,data,role){
   var wrap = el('div',{className:'settings-section',style:{marginTop:'8px'}});
-  wrap.appendChild(el('div',{className:'settings-section-title'},'自分の試合を探す'));
+  wrap.appendChild(el('div',{className:'settings-section-title'},'試合を探す'));
   var box = el('div',{className:'settings-list',style:{padding:'12px 16px'}});
-  var inp = el('input',{className:'settings-inp',placeholder:'選手名の一部を入力（例: 山田）'});
+  var inputWrap=el('div',{className:'search-input-wrap'});
+  var inp = el('input',{id:'playerMatchSearch',className:'settings-inp',placeholder:'選手名の一部もしくは試合Noを入力',autocomplete:'off'});
+  inp.value=playerSearchQuery;
+  var clearBtn=el('button',{type:'button',className:'search-clear'+(playerSearchQuery?' show':''),title:'入力をクリア','aria-label':'入力をクリア'},'×');
   var resultsWrap = el('div',{style:{marginTop:'10px'}});
 
-  function renderResults(){
-    resultsWrap.innerHTML = '';
-    var matches = searchPlayerMatches(data, inp.value);
-    if(!inp.value.trim()){
-      return;
-    }
-    if(matches.length===0){
+  function renderSearchResults(){
+    resultsWrap.innerHTML='';
+    var q=(playerSearchQuery||'').trim();
+    if(!q) return;
+    var matches=searchPlayerMatches(data,q);
+    if(!matches.length){
       resultsWrap.appendChild(el('div',{style:{fontSize:13,color:'var(--ink3)',padding:'6px 0'}},'該当する試合が見つかりません。'));
       return;
     }
     matches.forEach(function(m){
-      var line;
+      var badgeText='', badgeClass='';
+      var body='';
       if(m.status==='live'){
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge live'},'進行中'), 'コート'+m.courtNo+'　vs '+m.opponent]);
+        badgeText='進行中'; badgeClass=' live'; body='コート'+m.courtNo+'　'+(m.matchCode?m.matchCode+'　':'')+'vs '+m.opponent;
       }else if(m.status==='assigned'){
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge live'},'開始待ち'), 'コート'+m.courtNo+'　vs '+m.opponent]);
+        badgeText='開始待ち'; badgeClass=' live'; body='コート'+m.courtNo+'　'+(m.matchCode?m.matchCode+'　':'')+'vs '+m.opponent;
       }else if(m.status==='queued'){
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge queued'},'待ち'+m.position+'番目'), (m.time?m.time+'頃　':'')+'vs '+m.opponent]);
+        badgeText='待ち'+m.position+'番目'; badgeClass=' queued'; body=(m.matchCode?m.matchCode+'　':'')+(m.time?m.time+'　':'')+'vs '+m.opponent;
       }else{
-        line = el('div',{className:'search-hit'},[el('span',{className:'search-badge done'},'結果'), m.resultLabel+'　vs '+m.opponent]);
+        badgeText='結果'; badgeClass=' done'; body=(m.matchCode?m.matchCode+'　':'')+(m.resultLabel?m.resultLabel+'　':'')+'vs '+m.opponent;
       }
-      resultsWrap.appendChild(line);
+      resultsWrap.appendChild(el('div',{className:'search-hit'},[
+        el('span',{className:'search-badge'+badgeClass},badgeText), body
+      ]));
     });
   }
-  inp.oninput = renderResults;
-  box.appendChild(inp);
-  box.appendChild(resultsWrap);
-  wrap.appendChild(box);
+
+  function syncSearchValue(doRender){
+    playerSearchQuery=inp.value;
+    clearBtn.classList.toggle('show',!!inp.value);
+    // 検索結果だけを更新し、入力中は画面全体を再描画しない。
+    if(doRender && !playerSearchComposing) renderSearchResults();
+  }
+  inp.addEventListener('compositionstart',function(){ playerSearchComposing=true; });
+  inp.addEventListener('compositionend',function(){ playerSearchComposing=false; syncSearchValue(true); });
+  inp.addEventListener('input',function(){ syncSearchValue(!playerSearchComposing); });
+  clearBtn.onclick=function(){
+    playerSearchComposing=false; playerSearchQuery=''; inp.value=''; clearBtn.classList.remove('show');
+    renderSearchResults(); inp.focus();
+  };
+  inputWrap.appendChild(inp); inputWrap.appendChild(clearBtn); box.appendChild(inputWrap);
+  box.appendChild(resultsWrap); wrap.appendChild(box);
+  renderSearchResults();
   return wrap;
 }
-
+function queueMatchSearch(item, query){
+  var q=(query||'').trim().toLowerCase(); if(!q) return true;
+  var fields=[item&&item.matchCode?String(item.matchCode):''];
+  toArray(item&&item.teamA).concat(toArray(item&&item.teamB)).forEach(function(n){if(n)fields.push(String(n));});
+  return fields.some(function(v){return v.toLowerCase().indexOf(q)>=0;});
+}
 var progressRefreshTimer=null;
+var playerSearchQuery='';
+var playerSearchComposing=false;
 
 function mountProgress(eventId,data,role){
   var isAdmin=role==='admin';
@@ -3272,7 +3298,7 @@ function mountProgress(eventId,data,role){
     return;
   }
 
-  root.appendChild(buildPlayerSearch(data));
+  root.appendChild(buildPlayerSearch(eventId,data,role));
 
   root.appendChild(el('div',{className:'section-label'},'コート状況'));
   var grid=el('div',{className:'court-grid'});
@@ -3304,7 +3330,7 @@ function mountProgress(eventId,data,role){
   queueSorted.forEach(function(m,idx){
     var timeLabel = dynamicEstimates && dynamicEstimates[m.id] ? fmtHHMM(dynamicEstimates[m.id])+'頃' : (m.time||'');
     queueWrap.appendChild(el('div',{className:'queue-row'},[
-      el('span',{className:'queue-idx'},String(idx+1)),
+      el('span',{className:'queue-idx'},m.matchCode||'—'),
       el('span',{className:'queue-teams'},teamLabel(m.teamA)+' vs '+teamLabel(m.teamB)),
       el('span',{className:'queue-time'},timeLabel)
     ]));
@@ -3314,9 +3340,15 @@ function mountProgress(eventId,data,role){
   }
   root.appendChild(queueWrap);
 
+  var searchWasFocused=document.activeElement && document.activeElement.id==='playerMatchSearch';
+  var searchSelStart=searchWasFocused?document.activeElement.selectionStart:null;
   render(root);
+  if(searchWasFocused){ var restored=document.getElementById('playerMatchSearch'); if(restored){ restored.focus(); try{restored.setSelectionRange(searchSelStart,searchSelStart);}catch(e){} } }
   if(progressRefreshTimer) clearTimeout(progressRefreshTimer);
-  progressRefreshTimer=setTimeout(function(){ mountProgress(eventId,data,role); },1000);
+  progressRefreshTimer=setTimeout(function tick(){
+    if(document.activeElement && document.activeElement.id==='playerMatchSearch'){ progressRefreshTimer=setTimeout(tick,1000); return; }
+    mountProgress(eventId,data,role);
+  },1000);
 }
 
 /* ══ 起動 ══ */
