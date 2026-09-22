@@ -1203,7 +1203,7 @@ function demoProgressText(data){
     'バドるでは大会Nowから選手名・所属・試合情報を受け取り、コートサイドで採点できます。次は試合終了を疑似実行し、大会Nowへ戻ります。',
     'バドるの結果が大会Nowへ戻ると、コートが空き、結果がリーグ表へ自動反映されます。次はリーグ表を確認します。',
     'リーグ・トーナメントでは勝敗、詳細スコア、M/G/P、順位、勝ち上がりを確認できます。次は棄権管理を見ます。',
-    '「棄権」では不戦敗の登録・確認・取消を大会進行と分けて管理できます。次は設定・共有機能を見ます。',
+    '「棄権・変更」では不戦敗の登録・確認・取消と、当日の選手名変更を管理できます。次は設定・共有機能を見ます。',
     '「設定」では参加者向け／運営者向け共有、バドる連携、試合ルール、進行データの入出力などを管理できます。次は大会を最後まで自動進行します。',
     'リーグ戦の結果から順位を決め、各リーグ1位が決勝へ進みます。最終結果まで自動反映される流れを確認してください。',
     'デモ完了です。コート配信→バドる採点→結果反映→順位決定→決勝まで、大会運営の一連の流れを体験しました。'
@@ -1635,10 +1635,10 @@ var extraStyle = document.createElement('style');
 extraStyle.textContent = [
   '.tabs{display:flex;border-bottom:1px solid var(--rule);background:#fff;position:sticky;top:52px;z-index:45;box-shadow:0 1px 0 rgba(0,0,0,.04)}',
   '.tab-btn{flex:1 1 0;min-width:0;padding:11px 2px;font-size:13px;color:var(--ink3);background:none;border:none;border-bottom:2px solid transparent;white-space:nowrap}',
-  '.tabs .tab-btn:nth-child(1){flex-grow:3.5}',
-  '.tabs .tab-btn:nth-child(2){flex-grow:3.5}',
-  '.tabs .tab-btn:nth-child(3){flex-grow:1.5}',
-  '.tabs .tab-btn:nth-child(4){flex-grow:1.5}',
+  '.tabs .tab-btn:nth-child(1){flex-grow:5}',
+  '.tabs .tab-btn:nth-child(2){flex-grow:10}',
+  '.tabs .tab-btn:nth-child(3){flex-grow:5}',
+  '.tabs .tab-btn:nth-child(4){flex-grow:2}',
   '.tab-btn.active{color:var(--ink);border-bottom-color:var(--ink);font-weight:700}',
   '.league-card{background:#fff;border:1px solid var(--rule);border-radius:8px;margin:10px 18px;padding:12px 14px}',
   '.league-card.dragging{opacity:.5;box-shadow:0 4px 16px rgba(0,0,0,.15)}',
@@ -2023,7 +2023,28 @@ function buildBracketCard(data, bracket){
       var targetEl=tree.querySelector('[data-match-code="'+CSS.escape(String(target.matchCode||''))+'"]');
       if(!targetEl) return;
       [['A',target.slotA],['B',target.slotB]].forEach(function(pair){
-        var code=sourceCode(pair[1]); if(!code) return;
+        var code=sourceCode(pair[1]);
+        /* リーグ戦後トーナメントでは、勝ち上がり後に teamA/teamB だけが確定し、
+           slot が #winner 参照として残っていないデータもある。
+           その場合は直前ラウンドの確定勝者と対象スロットのチームを照合して接続する。 */
+        if(!code){
+          var targetTeam = pair[0]==='A' ? target.teamA : target.teamB;
+          if(targetTeam && targetTeam.length){
+            var targetRound=Number(target.round||1);
+            var targetKey=JSON.stringify(toArray(targetTeam));
+            var candidates=matches.filter(function(src){
+              if(Number(src.round||1)>=targetRound || !src.result) return false;
+              var winTeam=src.result.winner==='A' ? src.teamA : src.teamB;
+              return winTeam && JSON.stringify(toArray(winTeam))===targetKey;
+            }).sort(function(a,b){return Number(b.round||1)-Number(a.round||1);});
+            if(candidates.length){
+              var nearestRound=Number(candidates[0].round||1);
+              var nearest=candidates.filter(function(x){return Number(x.round||1)===nearestRound;});
+              if(nearest.length===1) code=String(nearest[0].matchCode||'');
+            }
+          }
+        }
+        if(!code) return;
         var sourceEl=tree.querySelector('[data-match-code="'+CSS.escape(code)+'"]'); if(!sourceEl) return;
         var sr=sourceEl.getBoundingClientRect(), dr=targetEl.getBoundingClientRect();
         var x1=sr.right-tr.left, y1=sr.top-tr.top+sr.height/2;
@@ -2136,35 +2157,72 @@ function orderedLeagueIds(data){
    move/up は document で受け、カードをDOM移動してもドラッグが途切れないようにする。 */
 function makeReorderable(container, itemSelector, getId, onDone){
   container.querySelectorAll('.drag-handle').forEach(function(handle){
+    handle.style.touchAction='none';
     handle.addEventListener('pointerdown', function(e){
       if(e.button!=null && e.button!==0) return;
       e.preventDefault(); e.stopPropagation();
       var dragging = handle.closest(itemSelector);
       if(!dragging) return;
       var pointerId=e.pointerId;
+      try{ handle.setPointerCapture(pointerId); }catch(_e){}
+
+      // 元カードの位置にはプレースホルダーを置き、ドラッグ中カードは画面上に固定する。
+      // これにより上→下でもカード自身のDOM移動による判定の揺れが起きない。
+      var r=dragging.getBoundingClientRect();
+      var placeholder=document.createElement('div');
+      placeholder.className='league-drag-placeholder';
+      placeholder.style.height=r.height+'px';
+      placeholder.style.marginBottom=getComputedStyle(dragging).marginBottom;
+      placeholder.style.border='2px dashed #9ca3af';
+      placeholder.style.borderRadius='12px';
+      placeholder.style.boxSizing='border-box';
+      placeholder.style.background='rgba(148,163,184,.08)';
+      dragging.parentNode.insertBefore(placeholder,dragging);
+
+      var oldStyle={position:dragging.style.position,left:dragging.style.left,top:dragging.style.top,width:dragging.style.width,zIndex:dragging.style.zIndex,pointerEvents:dragging.style.pointerEvents,margin:dragging.style.margin,transform:dragging.style.transform};
       dragging.classList.add('dragging');
+      dragging.style.position='fixed';
+      dragging.style.left=r.left+'px';
+      dragging.style.top=r.top+'px';
+      dragging.style.width=r.width+'px';
+      dragging.style.zIndex='5000';
+      dragging.style.pointerEvents='none';
+      dragging.style.margin='0';
+      var grabOffset=e.clientY-r.top;
+      document.body.appendChild(dragging);
       document.body.style.userSelect='none';
 
+      function movePlaceholder(y){
+        var items=Array.prototype.slice.call(container.querySelectorAll(itemSelector));
+        var placed=false;
+        for(var i=0;i<items.length;i++){
+          var rect=items[i].getBoundingClientRect();
+          if(y < rect.top + rect.height/2){
+            container.insertBefore(placeholder,items[i]);
+            placed=true; break;
+          }
+        }
+        if(!placed) container.appendChild(placeholder);
+      }
       function onMove(ev){
         if(ev.pointerId!==pointerId) return;
         ev.preventDefault();
-        var items = Array.prototype.slice.call(container.querySelectorAll(itemSelector)).filter(function(x){return x!==dragging;});
-        var y = ev.clientY, placed=false;
-        for(var i=0;i<items.length;i++){
-          var rect=items[i].getBoundingClientRect();
-          if(y < rect.top + rect.height/2){ container.insertBefore(dragging,items[i]); placed=true; break; }
-        }
-        if(!placed) container.appendChild(dragging);
-        // 画面端では自動スクロール
-        if(y<70) window.scrollBy(0,-12); else if(y>window.innerHeight-70) window.scrollBy(0,12);
+        dragging.style.top=(ev.clientY-grabOffset)+'px';
+        movePlaceholder(ev.clientY);
+        if(ev.clientY<70) window.scrollBy(0,-16);
+        else if(ev.clientY>window.innerHeight-70) window.scrollBy(0,16);
       }
       function finish(ev){
         if(ev && ev.pointerId!==pointerId) return;
-        dragging.classList.remove('dragging');
-        document.body.style.userSelect='';
+        try{ handle.releasePointerCapture(pointerId); }catch(_e){}
         document.removeEventListener('pointermove',onMove);
         document.removeEventListener('pointerup',finish);
         document.removeEventListener('pointercancel',finish);
+        placeholder.parentNode.insertBefore(dragging,placeholder);
+        placeholder.remove();
+        dragging.classList.remove('dragging');
+        Object.keys(oldStyle).forEach(function(k){ dragging.style[k]=oldStyle[k]; });
+        document.body.style.userSelect='';
         var order=Array.prototype.slice.call(container.querySelectorAll(itemSelector)).map(getId);
         onDone(order);
       }
@@ -2476,7 +2534,7 @@ function showHelpModal(){
       '<b>試合を探す</b>：選手名の一部または試合Noを入力すると、進行中／待ち順と予測時刻／結果、をまとめて確認できます。',
       '<b>キュー待ちの予測時刻</b>：正常終了の実績が19試合まではCSV記載の時間差を維持し、最新のassignedAt（大会Nowからコートへ配信した時刻）に合わせて全体を補正します。20試合そろった後は、直近20試合のassignedAtから終了までの平均所要時間を使い、コート別の空き時刻をシミュレーションして先の試合まで随時再予測します。'
     ]),
-    section('⑥「棄権」タブ','',[
+    section('⑥「棄権・変更」タブ','',[
       '<b>棄権（不戦敗）</b>：選手名を検索して登録すると、その選手（チーム）が絡む未実施の試合はすべて自動的に相手の不戦勝になります。バドるで試合途中に棄権した場合も自動的にここへ登録されます。登録済みの棄権者もこのタブで確認・取消できます。'
     ]),
     section('⑦「設定」タブ','',[
@@ -2563,6 +2621,102 @@ function collectAllPlayerNames(data){
     if(c && c.match){ toArray(c.match.teamA).concat(toArray(c.match.teamB)).forEach(function(n){ if(n) names[n]=true; }); }
   });
   return Object.keys(names).sort(function(a,b){ return a.localeCompare(b,'ja'); });
+}
+
+function replaceRegisteredPlayerName(eventId, oldName, newName){
+  oldName=String(oldName||'').trim(); newName=String(newName||'').trim();
+  if(!oldName || !newName || oldName===newName) return Promise.resolve(false);
+  return new Promise(function(resolve,reject){
+    dbRef(eventId).transaction(function(cur){
+      if(!cur) return cur;
+      function replTeam(team){ return toArray(team).map(function(n){ return n===oldName ? newName : n; }); }
+      Object.keys(cur.leagues||{}).forEach(function(lid){
+        var lg=cur.leagues[lid];
+        lg.participants=toArray(lg.participants).map(replTeam);
+        cur.leagues[lid]=lg;
+      });
+      cur.queue=toArray(cur.queue).map(function(m){
+        if(!m) return m;
+        var x=Object.assign({},m);
+        if(x.teamA) x.teamA=replTeam(x.teamA); if(x.teamB) x.teamB=replTeam(x.teamB);
+        return x;
+      });
+      Object.keys(cur.brackets||{}).forEach(function(bid){
+        var br=cur.brackets[bid];
+        br.matches=toArray(br.matches).map(function(m){
+          if(!m) return m;
+          var x=Object.assign({},m);
+          if(x.teamA) x.teamA=replTeam(x.teamA); if(x.teamB) x.teamB=replTeam(x.teamB);
+          if(x.slotA && x.slotA.type==='fixed') x.slotA=Object.assign({},x.slotA,{names:replTeam(x.slotA.names)});
+          if(x.slotB && x.slotB.type==='fixed') x.slotB=Object.assign({},x.slotB,{names:replTeam(x.slotB.names)});
+          return x;
+        });
+        cur.brackets[bid]=br;
+      });
+      Object.keys(cur.courts||{}).forEach(function(cno){
+        var c=cur.courts[cno]; if(!c || !c.match) return;
+        c=Object.assign({},c,{match:Object.assign({},c.match)});
+        if(c.match.teamA) c.match.teamA=replTeam(c.match.teamA); if(c.match.teamB) c.match.teamB=replTeam(c.match.teamB);
+        cur.courts[cno]=c;
+      });
+      Object.keys(cur.completedMatches||{}).forEach(function(code){
+        var m=cur.completedMatches[code]; if(!m) return;
+        m=Object.assign({},m);
+        if(m.teamA) m.teamA=replTeam(m.teamA); if(m.teamB) m.teamB=replTeam(m.teamB); if(m.winnerTeam) m.winnerTeam=replTeam(m.winnerTeam);
+        cur.completedMatches[code]=m;
+      });
+      Object.keys(cur.pendingResults||{}).forEach(function(k){
+        var r=cur.pendingResults[k]; if(!r) return;
+        r=Object.assign({},r);
+        if(r.teamA) r.teamA=replTeam(r.teamA); if(r.teamB) r.teamB=replTeam(r.teamB); if(r.winnerTeam) r.winnerTeam=replTeam(r.winnerTeam);
+        cur.pendingResults[k]=r;
+      });
+      if(cur.playerClubs && Object.prototype.hasOwnProperty.call(cur.playerClubs,oldName)){
+        cur.playerClubs[newName]=cur.playerClubs[oldName]; delete cur.playerClubs[oldName];
+      }
+      if(cur.withdrawnPlayers && Object.prototype.hasOwnProperty.call(cur.withdrawnPlayers,oldName)){
+        cur.withdrawnPlayers[newName]=cur.withdrawnPlayers[oldName]; delete cur.withdrawnPlayers[oldName];
+      }
+      cur.nameChanges=cur.nameChanges||{};
+      cur.nameChanges[String(Date.now())]={from:oldName,to:newName,changedAt:Date.now()};
+      return cur;
+    },function(err,committed){ if(err) reject(err); else resolve(!!committed); });
+  });
+}
+
+function buildPlayerChangeManager(eventId,data){
+  var section=el('div',{className:'settings-section'});
+  section.appendChild(el('div',{className:'settings-section-title'},'選手名の変更'));
+  var box=el('div',{className:'settings-list',style:{padding:'12px 16px'}});
+  box.appendChild(el('div',{className:'settings-row-sub',style:{marginBottom:'8px'}},'当日の選手変更に使用します。変更するとリーグ、待ち試合、トーナメント、配信中の試合、結果に同じ選手名が使われている箇所を一括で更新し、Firebaseを通じて全端末へ反映します。'));
+  var oldInp=el('input',{className:'settings-inp',placeholder:'変更前の選手名を検索'});
+  var suggestions=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'6px',marginTop:'8px'}});
+  var selected='';
+  var selectedLabel=el('div',{style:{fontSize:'13px',fontWeight:'700',marginTop:'8px'}});
+  var newInp=el('input',{className:'settings-inp',placeholder:'変更後の選手名を入力',style:{marginTop:'10px'}});
+  var allNames=collectAllPlayerNames(data);
+  function drawSuggestions(){
+    var q=oldInp.value.trim(); suggestions.innerHTML=''; selected=''; selectedLabel.textContent='';
+    if(!q) return;
+    allNames.filter(function(n){return n.indexOf(q)>=0;}).slice(0,12).forEach(function(n){
+      var b=el('button',{className:'pill-btn'},n);
+      b.onclick=function(){ selected=n; oldInp.value=n; selectedLabel.textContent='変更対象：'+n; suggestions.innerHTML=''; };
+      suggestions.appendChild(b);
+    });
+  }
+  oldInp.oninput=drawSuggestions;
+  var changeBtn=el('button',{className:'pill-btn',style:{marginTop:'10px',fontWeight:'700'}},'この選手名を変更');
+  changeBtn.onclick=function(){
+    var from=selected || oldInp.value.trim(), to=newInp.value.trim();
+    if(!from || allNames.indexOf(from)<0){ alert('変更前の選手を検索結果から選択してください。'); return; }
+    if(!to){ alert('変更後の選手名を入力してください。'); return; }
+    if(from===to){ alert('変更前と変更後の選手名が同じです。'); return; }
+    if(!confirm('「'+from+'」を「'+to+'」へ変更します。大会内の該当する選手名を一括更新してよろしいですか？')) return;
+    changeBtn.disabled=true;
+    replaceRegisteredPlayerName(eventId,from,to).then(function(){ oldInp.value='';newInp.value='';suggestions.innerHTML='';selectedLabel.textContent='変更しました：'+from+' → '+to; }).catch(function(e){ alert('選手名の変更に失敗しました。'); }).finally(function(){changeBtn.disabled=false;});
+  };
+  box.appendChild(oldInp); box.appendChild(suggestions); box.appendChild(selectedLabel); box.appendChild(newInp); box.appendChild(changeBtn);
+  section.appendChild(box); return section;
 }
 
 function buildWithdrawalManager(eventId, data){
@@ -3221,7 +3375,7 @@ function mountProgress(eventId,data,role){
   tabTournament.onclick=function(){ activeTab='tournament'; mountProgress(eventId,data,role); };
   tabs.appendChild(tabCourts); tabs.appendChild(tabTournament);
   if(isAdmin){
-    var tabWithdrawal = el('button',{className:'tab-btn'+(activeTab==='withdrawal'?' active':'')},'棄権');
+    var tabWithdrawal = el('button',{className:'tab-btn'+(activeTab==='withdrawal'?' active':'')},'棄権・変更');
     tabWithdrawal.onclick=function(){ activeTab='withdrawal'; mountProgress(eventId,data,role); };
     tabs.appendChild(tabWithdrawal);
     var tabSettings = el('button',{className:'tab-btn'+(activeTab==='settings'?' active':'')},'設定');
@@ -3235,6 +3389,7 @@ function mountProgress(eventId,data,role){
   if(activeTab==='withdrawal' && isAdmin){
     var withdrawalWrap=el('div',{style:{paddingBottom:'24px'}});
     withdrawalWrap.appendChild(buildWithdrawalManager(eventId, data));
+    withdrawalWrap.appendChild(buildPlayerChangeManager(eventId, data));
     root.appendChild(withdrawalWrap);
     render(root);
     return;
