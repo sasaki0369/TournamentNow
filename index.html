@@ -1843,10 +1843,15 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs,bador
       });
       return box;
     }
+    // バドるで左右を入れ替えた場合は、大会Now側も同じ左右で表示する。
+    // live.scoreA / gameWinsA は常にバドる画面の左側、B は右側を表す。
+    var liveSidesSwapped=!!(court.status==='live' && court.live && court.live.sidesSwapped);
+    var displayTeamA=liveSidesSwapped ? m.teamB : m.teamA;
+    var displayTeamB=liveSidesSwapped ? m.teamA : m.teamB;
     var courtTeams=el('div',{className:'court-teams'});
-    courtTeams.appendChild(buildCourtTeam(m.teamA));
+    courtTeams.appendChild(buildCourtTeam(displayTeamA));
     courtTeams.appendChild(el('div',{className:'court-vs'},'VS'));
-    courtTeams.appendChild(buildCourtTeam(m.teamB));
+    courtTeams.appendChild(buildCourtTeam(displayTeamB));
     card.appendChild(courtTeams);
     if(isAdmin && court.status==='assigned'){
       var cancelDispatchBtn=el('button',{className:'court-cancel-dispatch-btn'},'配信取りやめ');
