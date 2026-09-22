@@ -2440,6 +2440,7 @@ function buildTournamentView(eventId, data, isAdmin){
           card.style.display='';
           games.forEach(function(g){g.style.display='';});
           Array.prototype.forEach.call(card.querySelectorAll('.tournament-pair'),function(p){p.style.display='';});
+          var connector0=card.querySelector('.tournament-connectors'); if(connector0) connector0.style.display='';
           return;
         }
         // トーナメント名に一致した場合は全体を表示する。
@@ -2447,17 +2448,25 @@ function buildTournamentView(eventId, data, isAdmin){
           card.style.display='';
           games.forEach(function(g){g.style.display='';});
           Array.prototype.forEach.call(card.querySelectorAll('.tournament-pair'),function(p){p.style.display='';});
+          var connector1=card.querySelector('.tournament-connectors'); if(connector1) connector1.style.display='';
           return;
         }
         var any=false;
         games.forEach(function(g){
-          var hit=(g.getAttribute('data-search-text')||'').toLowerCase().indexOf(q)>=0;
+          // #winner参照やシードでは、画面描画時に初めて選手名が解決されることがある。
+          // 保存済み検索文字列に加えて、実際に表示されている文字列も検索対象にする。
+          var hay=((g.getAttribute('data-search-text')||'')+' '+(g.textContent||'')).toLowerCase();
+          var hit=hay.indexOf(q)>=0;
           g.style.display=hit?'':'none';
           if(hit) any=true;
         });
         Array.prototype.forEach.call(card.querySelectorAll('.tournament-pair'),function(p){
-          p.style.display=p.querySelector('.tournament-game:not([style*=\"display: none\"])')?'':'none';
+          var visible=Array.prototype.some.call(p.querySelectorAll('.tournament-game'),function(g){return g.style.display!=='none';});
+          p.style.display=visible?'':'none';
         });
+        // 抽出時は非表示試合への接続線だけが残らないよう線を隠す。
+        var connector=card.querySelector('.tournament-connectors');
+        if(connector) connector.style.display=any?'none':'';
         card.style.display=any?'':'none';
       });
     }
