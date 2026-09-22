@@ -1585,15 +1585,18 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs,bador
   var statusClass=court.status==='live'?'live':(court.status==='assigned'?'assigned':(court.status==='inactive'?'inactive':'idle'));
   var statusLabel=court.status==='live'?'進行中':(court.status==='assigned'?'配信済み・開始待ち':(court.status==='inactive'?'使用終了':'空き'));
   var card=el('div',{className:'court-card st-'+statusClass});
-  // カードのボタン等以外をタップすると、そのコート専用のバドる連携QRを表示する。
-  card.setAttribute('title','タップでコート '+courtNo+' のQRコードを表示');
-  card.onclick=function(e){
-    var interactive=e.target && e.target.closest ? e.target.closest('button,a,input,select,textarea,label') : null;
-    if(interactive) return;
-    var baseUrl=(badoruBaseUrl||DEFAULT_BADORU_URL).replace(/\/?$/, '/');
-    var link=baseUrl+'?taikaEvent='+encodeURIComponent(eventId)+'&court='+courtNo+'&fullscreen=1';
-    showQrModal('コート '+courtNo+' の連携リンク',link);
-  };
+  // 運営者画面のみ、カードのボタン等以外をタップすると、そのコート専用のバドる連携QRを表示する。
+  // 参加者向け（閲覧専用）画面ではカード自体は操作対象にしない。
+  if(isAdmin){
+    card.setAttribute('title','タップでコート '+courtNo+' のQRコードを表示');
+    card.onclick=function(e){
+      var interactive=e.target && e.target.closest ? e.target.closest('button,a,input,select,textarea,label') : null;
+      if(interactive) return;
+      var baseUrl=(badoruBaseUrl||DEFAULT_BADORU_URL).replace(/\/?$/, '/');
+      var link=baseUrl+'?taikaEvent='+encodeURIComponent(eventId)+'&court='+courtNo+'&fullscreen=1';
+      showQrModal('コート '+courtNo+' の連携リンク',link);
+    };
+  }
   card.appendChild(el('div',{className:'court-no'},'コート '+courtNo));
   var statusChildren=[el('span',{className:'court-dot '+(statusClass==='live'?'live':'')}), statusLabel];
   if(court.status==='live' && court.startedAt){
@@ -1636,9 +1639,21 @@ function buildCourtCard(courtNo,court,eventId,isAdmin,hasQueue,playerClubs,bador
     }
   }else{
     var m=court.match;
-    card.appendChild(el('div',{className:'court-teams'},[
-      teamLabelWithClubs(m.teamA,playerClubs||{}),el('span',{className:'court-vs'},'vs'),teamLabelWithClubs(m.teamB,playerClubs||{})
-    ]));
+    function courtTeamNodes(team){
+      var names=(team||[]).filter(Boolean);
+      if(!names.length) return [el('span',{className:'court-player'},'（未定）')];
+      var nodes=[];
+      names.forEach(function(name,idx){
+        if(idx) nodes.push(el('span',{className:'court-player-sep'},' / '));
+        nodes.push(el('span',{className:'court-player'},playerLabelWithClub(name,playerClubs||{})));
+      });
+      return nodes;
+    }
+    var courtTeams=el('div',{className:'court-teams'});
+    courtTeamNodes(m.teamA).forEach(function(n){courtTeams.appendChild(n);});
+    courtTeams.appendChild(el('span',{className:'court-vs'},'vs'));
+    courtTeamNodes(m.teamB).forEach(function(n){courtTeams.appendChild(n);});
+    card.appendChild(courtTeams);
     if(m.matchCode)card.appendChild(el('div',{className:'court-code'},m.matchCode));
     if(isAdmin && court.status==='assigned'){
       var cancelDispatchBtn=el('button',{className:'court-cancel-dispatch-btn'},'配信取りやめ');
@@ -1766,7 +1781,10 @@ extraStyle.textContent = [
   '.detail-games .detail-player{font-size:12px}',
   '.detail-modal{overscroll-behavior:contain}',
   '.detail-modal h3{overflow-wrap:anywhere}',
-  '.court-teams{overflow-wrap:anywhere}',
+  '.court-teams{overflow-wrap:normal;word-break:normal}',
+  '.court-player{display:inline-block;white-space:nowrap;word-break:keep-all;overflow-wrap:normal;max-width:100%;vertical-align:baseline}',
+  '.court-player-sep{display:inline-block;white-space:pre}',
+  '.court-vs{display:inline-block;white-space:nowrap}',
   '.court-score{white-space:nowrap}',
   '.award-player{overflow-wrap:anywhere}',
   '.tournament-team>span:first-child{min-width:0;overflow-wrap:anywhere}',
