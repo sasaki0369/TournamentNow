@@ -853,7 +853,11 @@ function applyWithdrawals(data){
       var a = lg.participants[m.i]||[], b = lg.participants[m.j]||[];
       var aOut = teamHasWithdrawn(a, withdrawn), bOut = teamHasWithdrawn(b, withdrawn);
       // C: 大会離脱者が含まれるリーグ戦は、実施済みを含め順位計算から除外する。
+      // ただし配信済み・進行中の試合には手を触れず、コート上の試合が終了して
+      // 結果が大会Nowへ反映された次の更新で「順位計算除外」に切り替える。
+      // これにより、実際にはプレイ中なのにリーグ表だけ先に「除外」になる状態を防ぐ。
       if((data.walkoverRule||'A')==='C' && (aOut || bOut)){
+        if(isBeingPlayed('league', lid, m.id)) return m;
         if(!m.result || !m.result.voided){ changed=true; return Object.assign({}, m, {result:{voided:true, walkover:true, walkoverRule:'C'}}); }
         return m;
       }
@@ -1414,6 +1418,7 @@ function mountSetup(){
     el('div',{style:{marginTop:'6px'}},[el('b',{},'決勝トーナメントの組み方：'),'選手名の代わりに以下が使えます。']),
     el('div',{},'　#league:リーグ名:順位　（例：#league:A2-A:1 → A2-Aリーグの1位）'),
     el('div',{},'　#winner:試合コード　（例：#winner:MS1 → 試合コードMS1の勝者。別グループ・別会場も参照可）'),
+    el('div',{style:{marginTop:'4px'}},'※2回戦以降の対戦相手は、ラウンド列だけでは自動設定されません。前の試合の勝者を入れる場合は、選手名欄に #winner:試合コード を指定してください。'),
     el('div',{},'これらを含む試合コードのグループは、自動的に「決勝トーナメント」として登録され、対戦相手が確定次第キューに入ります。')
   ]);
   var sampleCsvBtn=el('button',{className:'btn btn-ghost',type:'button',style:{marginTop:'10px',width:'100%'}},'8コート大会のサンプルCSVをダウンロード');
@@ -2876,6 +2881,7 @@ function showHelpModal(){
     section('② 決勝トーナメントの組み方','CSVの選手名欄に、以下の特殊な記法が使えます。',[
       '<code>#league:リーグ名:順位</code> … 例）#league:A2-A:1 → 「A2-A」というリーグの1位',
       '<code>#winner:試合コード</code> … 例）#winner:MS1 → 試合コードMS1の勝者（別グループ・別会場も参照可）',
+      '<b>注意：</b>2回戦以降の対戦相手は、ラウンド列だけでは自動設定されません。前の試合の勝者を入れる場合は、選手名欄に <code>#winner:試合コード</code> を必ず指定してください。',
       'これらを含む試合コードのグループ（例：AIIランク決勝T-1, -2, -3）は自動的に決勝トーナメントとして登録され、対戦相手が確定次第キューに入ります。'
     ]),
     section('③ コートへの自動配信','',[
