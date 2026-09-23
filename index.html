@@ -1557,16 +1557,48 @@ function mountSetup(){
       playerClubs:parsedPlayerClubs,
       playerReadings:parsedPlayerReadings
     };
-    dbRef(eventId).set(initial,function(err){
-      if(err){errEl.textContent='作成に失敗しました: '+err.message;return;}
+    /* 大会作成は通信瞬断に備え、同じeventIdへの冪等な再試行＋書込確認を行う。 */
+    var originalBtnText=startBtn.textContent;
+    startBtn.disabled=true;
+    startBtn.textContent='大会を作成中…';
+    errEl.textContent='Firebaseへ保存しています…';
+
+    function wait(ms){return new Promise(function(resolve){setTimeout(resolve,ms);});}
+    function withTimeout(promise,ms){
+      return new Promise(function(resolve,reject){
+        var done=false;
+        var timer=setTimeout(function(){if(!done){done=true;reject(new Error('通信がタイムアウトしました'));}},ms);
+        Promise.resolve(promise).then(function(v){if(!done){done=true;clearTimeout(timer);resolve(v);}},function(e){if(!done){done=true;clearTimeout(timer);reject(e);}});
+      });
+    }
+    function verifyCreated(){
+      return withTimeout(dbRef(eventId).once('value'),5000).then(function(snap){return !!(snap&&snap.exists());}).catch(function(){return false;});
+    }
+    function writeAttempt(attempt){
+      errEl.textContent=attempt===1?'Firebaseへ保存しています…':'通信を再確認しています…（'+attempt+'/3）';
+      return withTimeout(dbRef(eventId).set(initial),8000).then(function(){return true;}).catch(function(writeErr){
+        /* setの応答だけ失われ、実際には保存済みのケースを先に確認する。 */
+        return verifyCreated().then(function(exists){
+          if(exists)return true;
+          if(attempt>=3)throw writeErr;
+          return wait(attempt*800).then(function(){return writeAttempt(attempt+1);});
+        });
+      });
+    }
+
+    writeAttempt(1).then(function(){
       saveEventToList({eventId:eventId,eventName:eventName,createdAt:Date.now()});
-      /* CSV内にリーグ候補がある場合はリーグ登録画面を先に開く。
-         候補がない場合は、そのまま大会ルール等を確認できる設定画面へ進む。 */
       var leagueDetection = autoDetectLeaguesFromQueue(initial);
       activeTab = leagueDetection.candidateGroups.length > 0 ? 'tournament' : 'settings';
       scrollTournamentTopOnce = activeTab === 'tournament';
+      errEl.textContent='';
       location.hash='admin:'+eventId;
       startAdmin(eventId);
+    }).catch(function(err){
+      console.error('create event failed',err);
+      errEl.textContent='大会を作成できませんでした。通信状態を確認して、もう一度お試しください。'+(err&&err.message?'（'+err.message+'）':'');
+      startBtn.disabled=false;
+      startBtn.textContent=originalBtnText;
     });
   };
 
