@@ -3475,7 +3475,7 @@ function buildWithdrawalManager(eventId, data){
   // --- 試合ルール（バドる連携時に自動反映） ---
   var rulesSection = el('div',{className:'settings-section'});
   rulesSection.appendChild(el('div',{className:'settings-section-title'},'試合ルール'));
-  var rules = Object.assign({ format:'best3', points:15, deuce:true, deuceMax:21 }, data.matchRules||{});
+  var rules = Object.assign({ format:'best3', points:15, deuce:true, deuceMax:21, midIntervalSec:60, gameIntervalSec:120 }, data.matchRules||{});
 
   var rulesErr = el('div',{className:'err',style:{marginTop:'4px'}});
   function saveRules(patch){
@@ -3533,6 +3533,26 @@ function buildWithdrawalManager(eventId, data){
   rulesSection.appendChild(el('div',{className:'settings-row-sub',style:{margin:'8px 4px 0'}},
     '連携中のバドるには、試合開始時にこのルールが自動的に反映されます（選手名・種目は各試合のデータがそのまま使われます）。'));
   wrap.appendChild(rulesSection);
+
+  // --- インターバル設定 ---
+  var intervalSection = el('div',{className:'settings-section'});
+  intervalSection.appendChild(el('div',{className:'settings-section-title'},'インターバル設定'));
+  var intervalCard = el('div',{className:'settings-list'});
+  function intervalInputRow(label, sub, key, fallback){
+    var inp=el('input',{className:'settings-inp',type:'number',min:'0',step:'1',value:String(Number(rules[key])>=0?Number(rules[key]):fallback),style:{width:'92px',textAlign:'right'}});
+    inp.onchange=function(){
+      var v=Math.max(0,Math.floor(Number(inp.value)));
+      if(!isFinite(v)) v=fallback;
+      inp.value=String(v);
+      var patch={}; patch[key]=v; saveRules(patch);
+    };
+    intervalCard.appendChild(settingsRow(label,sub,el('div',{style:{display:'flex',alignItems:'center',gap:'6px'}},[inp,el('span',{className:'settings-row-sub'},'秒')])));
+  }
+  intervalInputRow('8点／11点到達時','15点制は8点、21点制は11点で適用','midIntervalSec',60);
+  intervalInputRow('ゲーム間','次ゲームがある場合のみ適用','gameIntervalSec',120);
+  intervalSection.appendChild(intervalCard);
+  intervalSection.appendChild(el('div',{className:'settings-row-sub',style:{margin:'8px 4px 0'}},'マッチ終了が確定したゲームの後にはゲーム間インターバルは発生しません。'));
+  wrap.appendChild(intervalSection);
 
   // --- 共有 ---
   var shareSection = el('div',{className:'settings-section'});
