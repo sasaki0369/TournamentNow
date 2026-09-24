@@ -3974,6 +3974,9 @@ function predictionDiffLabel(initialTime, latestTs){
 }
 
 function mountProgress(eventId,data,role){
+  // 緊急スコア入力など、現在表示中の大会設定を参照する補助UI用。
+  // Firebaseのvalue更新ごとにmountProgressへ最新dataが渡るため、常に最新設定へ追従する。
+  window.currentEventData = data;
   // IME変換中にDOMを再描画すると未確定文字列が1文字ずつ確定されるため、変換終了まで描画を保留する。
   if(playerSearchComposing && document.activeElement && document.activeElement.id==='playerMatchSearch') return;
   var isAdmin=role==='admin';
