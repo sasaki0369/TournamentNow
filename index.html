@@ -594,7 +594,18 @@ function resolveSlotRef(data, ref){
     if(!lg) return null;
     var st = computeStandings(lg);
     if(!st.complete || st.needsManualTiebreak || !st.ranking) return null;
-    var entry = st.ranking.filter(function(r){ return r.rank===ref.rank; })[0];
+
+    // リーグ終了時点で大会棄権登録されている選手・ペアは、順位の数値が上位でも
+    // 決勝トーナメント等の #league:... 参照による「勝ち上がり」対象にはしない。
+    // 例: 本来の1位が最終戦で棄権した場合、#league:A:1 は次の出場可能な上位者を解決する。
+    // ダブルスはペアのどちらか一人でも棄権登録されていれば、そのペア全体を対象外とする。
+    var withdrawn = (data && data.withdrawnPlayers) || {};
+    var eligibleRanking = st.ranking.filter(function(r){
+      var team = lg.participants[r.idx] || [];
+      return !toArray(team).some(function(name){ return name && withdrawn[name]; });
+    });
+    var eligibleRank = Math.max(1, Number(ref.rank)||1);
+    var entry = eligibleRanking[eligibleRank-1];
     if(!entry) return null;
     return lg.participants[entry.idx];
   }
