@@ -3022,7 +3022,22 @@ function buildTournamentView(eventId, data, isAdmin){
 }
 
 /* ══ 設定画面：共有・バドる連携リンク・エクスポート／インポート ══ */
-var DEFAULT_BADORU_URL = 'https://sasaki0369.github.io/badru/';
+function deriveDefaultBadoruUrl(){
+  try{
+    var loc=window.location;
+    if(!loc || !/^https?:$/.test(loc.protocol)) return 'https://magonote-lab.github.io/badoru/';
+    var path=loc.pathname||'/';
+    // index.html 等のファイル名を除き、大会Nowディレクトリの一つ上を基準に badoru/ を置く。
+    if(!path.endsWith('/')) path=path.replace(/[^/]*$/,'');
+    var parts=path.split('/').filter(Boolean);
+    if(parts.length) parts.pop();
+    var parent='/' + (parts.length ? parts.join('/')+'/' : '');
+    return loc.origin + parent + 'badoru/';
+  }catch(e){
+    return 'https://magonote-lab.github.io/badoru/';
+  }
+}
+var DEFAULT_BADORU_URL = deriveDefaultBadoruUrl();
 
 function showHelpModal(){
   var bg = el('div',{className:'qr-modal-bg'});
