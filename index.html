@@ -2302,7 +2302,13 @@ function bracketSlotLabel(data, ref){
   if(ref.type==='fixed') return teamLabel(ref.names);
   if(ref.type==='leagueRank'){
     var lg = (data.leagues||{})[ref.leagueId];
-    return (lg?lg.name:'?')+' '+ref.rank+'位';
+    if(!lg){
+      // #league:リーグ名:順位 の参照では leagueId にリーグ名が入る場合があるため、
+      // 実際の勝ち上がり解決と同じくリーグ名でも検索する。
+      lg = Object.keys(data.leagues||{}).map(function(k){ return data.leagues[k]; })
+        .filter(function(l){ return l && l.name===ref.leagueId; })[0];
+    }
+    return (lg?lg.name:(ref.leagueId||'?'))+' '+ref.rank+'位';
   }
   if(ref.type==='matchWinner'){
     var br = (data.brackets||{})[ref.bracketId];
