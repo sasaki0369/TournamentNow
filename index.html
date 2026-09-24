@@ -3537,7 +3537,7 @@ function buildWithdrawalManager(eventId, data){
   // --- インターバル設定 ---
   var intervalSection = el('div',{className:'settings-section'});
   intervalSection.appendChild(el('div',{className:'settings-section-title'},'インターバル設定'));
-  var intervalCard = el('div',{className:'settings-list'});
+  var intervalCard = el('div',{className:'settings-list',style:{padding:'14px 16px'}});
   intervalCard.appendChild(segRow('インターバル',
     [{value:true,label:'あり'},{value:false,label:'なし'}],
     rules.intervalEnabled!==false, function(v){ saveRules({intervalEnabled:v}); }));
