@@ -1420,7 +1420,7 @@ function mountSetup(){
   var card2b=el('div',{className:'card'},[venueLabel,venueInp]);
 
   var csvLabel=el('div',{className:'field-label'},'試合キュー（CSV）');
-  var csvFile=el('input',{type:'file',accept:'.csv,text/csv,text/plain,application/vnd.ms-excel,application/octet-stream',style:{display:'block',marginTop:'8px'}});
+  var csvFile=el('input',{type:'file',accept:'.csv',style:{display:'block',marginTop:'8px'}});
   var csvInfo=el('div',{className:'csv-info',style:{marginTop:'10px'}},[
     el('div',{},[el('b',{},'列構成：'),'時刻,試合コード,種目,選手A1,選手A2,選手B1,選手B2,ラウンド,選手A1所属,選手A2所属,選手B1所属,選手B2所属,選手A1ふりがな,選手A2ふりがな,選手B1ふりがな,選手B2ふりがな']),
     el('div',{},'種目は「シングルス」または「ダブルス」。1行目はヘッダーとして無視されます。ふりがな4列は任意です。入力すると配信時の読み上げ確認画面で氏名の上に小さく表示されます。'),
@@ -3082,7 +3082,13 @@ function showHelpModal(){
       '<b>進行状況</b>：現在の状態をCSVに書き出す「エクスポート」、そのCSVから復元する「インポート」、試合を追加で読み込む「追加で取り込む」、全部消してやり直す「上書きする」。',
       '<b>大会一覧に戻る</b>：試合を進めながらでも、ここからいつでも他の大会や新規作成画面に移動できます。'
     ]),
-    section('⑧ バドるとの連携でできること','',[
+    section('⑧ ローカルバックアップ','Firebaseとは別に、運営端末のブラウザ内（IndexedDB）へ自動保存します。',[
+      '<b>途中スコア</b>：Firebaseから受信したコートごとのスコア変化を、小さな観測履歴として非同期保存します。保存完了を待たず画面更新・大会進行を続けるため、通常操作の待ち時間にはしません。',
+      '<b>大会全体</b>：大会を開いた時と、完了試合数が増えた時に、リーグ・トーナメント・キュー・コート・確定結果など大会データ一式のスナップショットを保存します。',
+      '<b>役割</b>：確定結果と大会スナップショットを復旧用、途中スコア履歴を確認・監査用として分離しています。Firebaseへの自動復元は行いません。',
+      '<b>注意</b>：このバックアップは各運営端末ごとに保存されます。ブラウザのサイトデータ削除や端末故障では失われるため、複数の運営端末を開いておくことや進行状況CSVの書き出しも併用してください。'
+    ]),
+    section('⑨ バドるとの連携でできること','',[
       '配信された試合の選手名・種目が自動反映されます。',
       '試合終了・棄権の結果が自動的に大会Nowへ送られ、リーグ・ブラケットに反映されます。開始取消では結果を送らず、配信済み・開始待ちへ戻ります。',
       '盤面・設定画面に、そのタブレットが担当しているコート番号が表示されます。',
@@ -3670,7 +3676,7 @@ function buildWithdrawalManager(eventId, data){
   };
   dataList.appendChild(settingsRow('進行状況をエクスポート','リーグ・ブラケット・キュー・コートをCSVに書き出します', exportBtn));
 
-  var importInp = el('input',{type:'file',accept:'.csv,text/csv,text/plain,application/vnd.ms-excel,application/octet-stream',style:{display:'none'}});
+  var importInp = el('input',{type:'file',accept:'.csv',style:{display:'none'}});
   var importBtn = el('button',{className:'pill-btn pill-danger'},'インポート');
   importBtn.onclick=function(){ importInp.click(); };
   importInp.onchange=function(){
@@ -3692,7 +3698,7 @@ function buildWithdrawalManager(eventId, data){
   dataList.appendChild(settingsRow('進行状況をインポート','CSVから大会の状態を復元します（現在の内容を置き換えます）', importBtn));
   dataList.appendChild(importInp);
 
-  var addCsvInp = el('input',{type:'file',accept:'.csv,text/csv,text/plain,application/vnd.ms-excel,application/octet-stream',style:{display:'none'}});
+  var addCsvInp = el('input',{type:'file',accept:'.csv',style:{display:'none'}});
   var addCsvBtn = el('button',{className:'pill-btn'},'追加');
   addCsvBtn.onclick=function(){ addCsvInp.click(); };
   addCsvInp.onchange=function(){
@@ -3710,7 +3716,7 @@ function buildWithdrawalManager(eventId, data){
   dataList.appendChild(settingsRow('試合キューCSVを追加で取り込む','現在の内容に追加します（決勝トーナメントの後から追加にも使えます）', addCsvBtn));
   dataList.appendChild(addCsvInp);
 
-  var overwriteCsvInp = el('input',{type:'file',accept:'.csv,text/csv,text/plain,application/vnd.ms-excel,application/octet-stream',style:{display:'none'}});
+  var overwriteCsvInp = el('input',{type:'file',accept:'.csv',style:{display:'none'}});
   var overwriteCsvBtn = el('button',{className:'pill-btn pill-danger'},'上書き');
   overwriteCsvBtn.onclick=function(){ overwriteCsvInp.click(); };
   overwriteCsvInp.onchange=function(){
@@ -4150,6 +4156,65 @@ function mountProgress(eventId,data,role){
   },1000);
 }
 
+
+/* ══ 運営端末ローカル・バックアップ（IndexedDB） ══
+   Firebaseとは独立した復旧用コピー。value受信処理では保存完了を待たず、
+   完了試合数が増えた時だけ大会全体スナップショットを別タスクで保存する。 */
+var LOCAL_BACKUP_DB='taikainow-local-backup-v1';
+var localBackupDbPromise=null, localBackupState={};
+function openLocalBackupDb(){
+  if(localBackupDbPromise) return localBackupDbPromise;
+  localBackupDbPromise=new Promise(function(resolve,reject){
+    if(!window.indexedDB){reject(new Error('IndexedDB unavailable'));return;}
+    var req=indexedDB.open(LOCAL_BACKUP_DB,1);
+    req.onupgradeneeded=function(){
+      var db=req.result;
+      if(!db.objectStoreNames.contains('snapshots')){var st=db.createObjectStore('snapshots',{keyPath:'id'});st.createIndex('eventId','eventId',{unique:false});}
+      if(!db.objectStoreNames.contains('scoreObservations')){var so=db.createObjectStore('scoreObservations',{keyPath:'id',autoIncrement:true});so.createIndex('eventId','eventId',{unique:false});}
+    };
+    req.onsuccess=function(){resolve(req.result);}; req.onerror=function(){reject(req.error||new Error('IndexedDB open failed'));};
+  });
+  return localBackupDbPromise;
+}
+function pruneLocalSnapshots(eventId){
+  // 直近20世代は必ず保持し、10試合ごとの節目は残す。無制限増加を防ぐ。
+  return openLocalBackupDb().then(function(db){return new Promise(function(resolve,reject){
+    var tx=db.transaction('snapshots','readwrite'), idx=tx.objectStore('snapshots').index('eventId'), req=idx.getAll(IDBKeyRange.only(eventId));
+    req.onsuccess=function(){
+      var rows=(req.result||[]).sort(function(a,b){return Number(b.savedAt||0)-Number(a.savedAt||0);});
+      rows.forEach(function(r,i){ if(i>=20 && Number(r.completedCount||0)%10!==0) tx.objectStore('snapshots').delete(r.id); });
+    };
+    req.onerror=function(){reject(req.error);}; tx.oncomplete=resolve; tx.onerror=function(){reject(tx.error);};
+  });}).catch(function(e){console.warn('ローカルバックアップ世代整理に失敗',e);});
+}
+function observeTournamentForLocalBackup(eventId,data){
+  if(!eventId||!data) return;
+  var completed=Object.keys(data.completedMatches||{}).length;
+  var st=localBackupState[eventId]||(localBackupState[eventId]={completed:-1,courts:{}});
+  // liveスコアは小さな観測レコードだけ保存。大会全体の複製はしない。
+  var observations=[];
+  Object.keys(data.courts||{}).forEach(function(k){
+    var c=data.courts[k], l=c&&c.live;
+    if(!l) return;
+    var sig=[c.assignmentId||'',c.match&&(c.match.matchCode||c.match.id)||'',l.scoreA,l.scoreB,l.gameWinsA,l.gameWinsB,l.sidesSwapped?1:0].join('|');
+    if(st.courts[k]===sig) return;
+    st.courts[k]=sig;
+    observations.push({eventId:eventId,courtNo:k,assignmentId:c.assignmentId||null,matchCode:c.match&&(c.match.matchCode||c.match.id)||null,scoreA:Number(l.scoreA)||0,scoreB:Number(l.scoreB)||0,gameWinsA:Number(l.gameWinsA)||0,gameWinsB:Number(l.gameWinsB)||0,sidesSwapped:!!l.sidesSwapped,ts:Date.now()});
+  });
+  if(observations.length) setTimeout(function(){
+    openLocalBackupDb().then(function(db){return new Promise(function(resolve,reject){var tx=db.transaction('scoreObservations','readwrite'),os=tx.objectStore('scoreObservations');observations.forEach(function(x){os.add(x);});tx.oncomplete=resolve;tx.onerror=function(){reject(tx.error);};});}).catch(function(e){console.warn('ローカルスコア観測保存に失敗',e);});
+  },0);
+  // 初回と「完了試合数が増えた時」に大会全体を保存。採点・Firebase反映はこの保存を待たない。
+  if(st.completed===completed) return;
+  st.completed=completed;
+  setTimeout(function(){
+    try{
+      var rec={id:eventId+':'+Date.now()+':'+completed,eventId:eventId,eventName:data.eventName||'',savedAt:Date.now(),completedCount:completed,schemaVersion:1,snapshot:data};
+      openLocalBackupDb().then(function(db){return new Promise(function(resolve,reject){var tx=db.transaction('snapshots','readwrite');tx.objectStore('snapshots').put(rec);tx.oncomplete=resolve;tx.onerror=function(){reject(tx.error);};});}).then(function(){return pruneLocalSnapshots(eventId);}).catch(function(e){console.warn('大会ローカルバックアップに失敗',e);});
+    }catch(e){console.warn('大会ローカルバックアップ生成に失敗',e);}
+  },0);
+}
+
 /* ══ 起動 ══ */
 function startAdmin(eventId){
   watchAndDispatch(eventId);
@@ -4158,6 +4223,7 @@ function startAdmin(eventId){
       render(el('div',{style:{padding:20}},'大会データが見つかりません'));
       return;
     }
+    observeTournamentForLocalBackup(eventId,data);
     mountProgress(eventId,data,'admin');
   });
 }
